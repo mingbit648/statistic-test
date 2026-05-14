@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>知识库 - 病历分析系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/style.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container-fluid">
+        <!-- 顶部导航栏 -->
+        <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+            <div class="container">
+                <a class="navbar-brand" href="/">
+                    <i class="fas fa-file-medical me-2"></i>病历分析系统
+                </a>
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link" href="/">
+                        <i class="fas fa-home me-1"></i>首页
+                    </a>
+                    <a class="nav-link active" href="/standards">
+                        <i class="fas fa-book me-1"></i>知识库
+                    </a>
+                    <a class="nav-link" href="/history">
+                        <i class="fas fa-history me-1"></i>历史记录
+                    </a>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 主要内容区域 -->
+        <div class="container mt-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>
+                    <i class="fas fa-book me-2"></i>知识库
+                </h2>
+                <span class="badge bg-primary fs-6" id="standardCount">0 个标准文件</span>
+            </div>
+
+            <!-- 上传区域 -->
+            <div class="card mb-4">
+                <div class="card-header bg-primary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-upload me-2"></i>上传标准文件
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <form id="uploadForm" enctype="multipart/form-data">
+                        <div class="row align-items-end">
+                            <div class="col-md-8">
+                                <label for="standardFile" class="form-label">
+                                    <i class="fas fa-file-contract me-2"></i>选择标准文件
+                                </label>
+                                <input class="form-control" type="file" id="standardFile" name="standard_file" accept=".xml,.md,.txt,.json" required>
+                                <div class="form-text">支持 .xml, .md, .txt, .json 格式</div>
+                            </div>
+                            <div class="col-md-4">
+                                <button type="submit" class="btn btn-success w-100" id="uploadBtn">
+                                    <i class="fas fa-cloud-upload-alt me-2"></i>上传
+                                </button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+            </div>
+
+            <!-- 标准文件列表 -->
+            <div class="card">
+                <div class="card-header bg-secondary text-white">
+                    <h5 class="mb-0">
+                        <i class="fas fa-list me-2"></i>标准文件列表
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div id="standardsList">
+                        <!-- 动态加载 -->
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // 页面加载时获取标准列表
+        document.addEventListener('DOMContentLoaded', loadStandards);
+
+        // 上传表单处理
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const fileInput = document.getElementById('standardFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                showAlert('请选择文件', 'warning');
+                return;
+            }
+            
+            const btn = document.getElementById('uploadBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>上传中...';
+            
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                
+                const response = await fetch('/api/standards/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showAlert('上传成功', 'success');
+                    fileInput.value = '';
+                    loadStandards();
+                } else {
+                    showAlert('上传失败: ' + result.message, 'danger');
+                }
+            } catch (error) {
+                showAlert('上传失败: ' + error.message, 'danger');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '<i class="fas fa-cloud-upload-alt me-2"></i>上传';
+            }
+        });
+
+        // 加载标准列表
+        async function loadStandards() {
+            try {
+                const response = await fetch('/api/standards');
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    renderStandardsList(result.data.standards, result.data.selected_id);
+                    document.getElementById('standardCount').textContent = `${result.data.standards.length} 个标准文件`;
+                }
+            } catch (error) {
+                console.error('加载标准列表失败:', error);
+            }
+        }
+
+        // 渲染标准列表
+        function renderStandardsList(standards, selectedId) {
+            const container = document.getElementById('standardsList');
+            
+            if (standards.length === 0) {
+                container.innerHTML = `
+                    <div class="text-center py-4 text-muted">
+                        <i class="fas fa-folder-open fa-3x mb-3"></i>
+                        <p>暂无标准文件，请上传</p>
+                    </div>
+                `;
+                return;
+            }
+            
+            let html = '<div class="table-responsive"><table class="table table-hover">';
+            html += `
+                <thead>
+                    <tr>
+                        <th>状态</th>
+                        <th>文件名</th>
+                        <th>上传时间</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody>
+            `;
+            
+            standards.forEach(item => {
+                const isSelected = item.id === selectedId;
+                const statusBadge = isSelected 
+                    ? '<span class="badge bg-success"><i class="fas fa-check me-1"></i>当前使用</span>'
+                    : '<span class="badge bg-secondary">未选中</span>';
+                
+                const uploadTime = new Date(item.upload_time).toLocaleString('zh-CN');
+                
+                html += `
+                    <tr class="${isSelected ? 'table-success' : ''}">
+                        <td>${statusBadge}</td>
+                        <td><i class="fas fa-file-alt me-2"></i>${item.filename}</td>
+                        <td>${uploadTime}</td>
+                        <td>
+                            ${isSelected 
+                                ? '<button class="btn btn-sm btn-outline-secondary" disabled><i class="fas fa-check me-1"></i>已选中</button>'
+                                : `<button class="btn btn-sm btn-primary me-2" onclick="selectStandard('${item.id}')"><i class="fas fa-check me-1"></i>设为默认</button>
+                                   <button class="btn btn-sm btn-outline-danger" onclick="deleteStandard('${item.id}')"><i class="fas fa-trash me-1"></i>删除</button>`
+                            }
+                        </td>
+                    </tr>
+                `;
+            });
+            
+            html += '</tbody></table></div>';
+            container.innerHTML = html;
+        }
+
+        // 设为默认标准
+        async function selectStandard(id) {
+            try {
+                const response = await fetch(`/api/standards/${id}/select`, {
+                    method: 'POST'
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showAlert('已设为默认标准', 'success');
+                    loadStandards();
+                } else {
+                    showAlert('设置失败: ' + result.message, 'danger');
+                }
+            } catch (error) {
+                showAlert('设置失败: ' + error.message, 'danger');
+            }
+        }
+
+        // 删除标准
+        async function deleteStandard(id) {
+            if (!confirm('确定要删除此标准文件吗？')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/standards/${id}`, {
+                    method: 'DELETE'
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    showAlert('删除成功', 'success');
+                    loadStandards();
+                } else {
+                    showAlert('删除失败: ' + result.message, 'danger');
+                }
+            } catch (error) {
+                showAlert('删除失败: ' + error.message, 'danger');
+            }
+        }
+
+        // 显示提示
+        function showAlert(message, type) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+            alertDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            const container = document.querySelector('.container');
+            container.insertBefore(alertDiv, container.children[1]);
+            
+            setTimeout(() => alertDiv.remove(), 3000);
+        }
+    </script>
+</body>
+</html>

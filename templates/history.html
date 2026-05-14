@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>历史记录 - 病历分析系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/style.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container-fluid">
+        <!-- 顶部导航栏 -->
+        <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+            <div class="container">
+                <a class="navbar-brand" href="/">
+                    <i class="fas fa-file-medical me-2"></i>病历分析系统
+                </a>
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link" href="/">
+                        <i class="fas fa-home me-1"></i>首页
+                    </a>
+                    <a class="nav-link" href="/standards">
+                        <i class="fas fa-book me-1"></i>知识库
+                    </a>
+                    <a class="nav-link active" href="/history">
+                        <i class="fas fa-history me-1"></i>历史记录
+                    </a>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 主要内容区域 -->
+        <div class="container mt-4">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h2>
+                    <i class="fas fa-history me-2"></i>分析历史记录
+                </h2>
+                <span class="badge bg-primary fs-6">{{ history|length }} 条记录</span>
+            </div>
+
+            {% if not history %}
+                <!-- 空状态 -->
+                <div class="text-center py-5">
+                    <div class="empty-state">
+                        <i class="fas fa-file-medical fa-4x text-muted mb-3"></i>
+                        <h4 class="text-muted">暂无分析记录</h4>
+                        <p class="text-muted">请返回首页上传病历文件和标准文件进行分析</p>
+                        <a href="/" class="btn btn-primary mt-3">
+                            <i class="fas fa-upload me-2"></i>开始分析
+                        </a>
+                    </div>
+                </div>
+            {% else %}
+                <!-- 历史记录选择下拉框 -->
+                <div class="row">
+                    <div class="col-lg-8">
+                        <div class="card mb-4">
+                            <div class="card-header">
+                                <h6 class="mb-0">
+                                    <i class="fas fa-list me-2"></i>选择历史记录
+                                </h6>
+                            </div>
+                            <div class="card-body">
+                                <div class="mb-3">
+                                    <label for="historySelect" class="form-label">选择要查看的记录:</label>
+                                    <select class="form-select" id="historySelect" onchange="onHistorySelectChange()">
+                                        <option value="">请选择一条记录...</option>
+                                        {% for item in history %}
+                                            <option value="{{ item.id }}">
+                                                {{ item.get('record_name', '分析记录 #' + item.id|string) }} ({{ item.timestamp[:16].replace('T', ' ') }})
+                                            </option>
+                                        {% endfor %}
+                                    </select>
+                                </div>
+                                <div class="d-flex gap-2">
+                                    <button class="btn btn-outline-danger btn-sm" onclick="deleteSelectedRecord()">
+                                        <i class="fas fa-trash me-1"></i>删除选中记录
+                                    </button>
+                                    <button class="btn btn-outline-secondary btn-sm" onclick="clearSelection()">
+                                        <i class="fas fa-times me-1"></i>清除选择
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- 详情显示区域 -->
+                <div id="detailSection" class="row mt-4" style="display: none;">
+                    <!-- 左侧分析结果区域 -->
+                    <div class="col-lg-8">
+                        <div class="card">
+                            <div class="card-header bg-primary text-white">
+                                <h4 class="mb-0">
+                                    <i class="fas fa-file-alt me-2"></i>分析详情
+                                </h4>
+                            </div>
+                            <div class="card-body">
+                                <!-- 文件信息 -->
+                                <div class="row mb-4">
+                                    <div class="col-md-6">
+                                        <div class="card">
+                                            <div class="card-header bg-secondary text-white">
+                                                <h6 class="mb-0">文件信息</h6>
+                                            </div>
+                                            <div class="card-body">
+                                                <div class="mb-3">
+                                                    <strong>记录名称:</strong> 
+                                                    <span id="detailRecordName"></span>
+                                                    <button class="btn btn-sm btn-outline-primary ms-2" onclick="renameRecord()">
+                                                        <i class="fas fa-edit me-1"></i>修改名称
+                                                    </button>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <strong>病历文件:</strong> 
+                                                    <span id="detailRecordFilename"></span>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <strong>标准文件:</strong> 
+                                                    <span id="detailStandardFilename"></span>
+                                                </div>
+                                                <p><strong>分析时间:</strong> <span id="detailTimestamp"></span></p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="d-grid gap-2">
+                                            <button class="btn btn-success" onclick="downloadReport()">
+                                                <i class="fas fa-download me-2"></i>下载报告
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- 病历等级分析 -->
+                                <div class="card mb-4">
+                                    <div class="card-header bg-success text-white">
+                                        <h5 class="mb-0">
+                                            <i class="fas fa-star me-2"></i>病历等级分析
+                                        </h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="detailRecordRating" class="markdown-content"></div>
+                                    </div>
+                                </div>
+
+                                <!-- 全国性分析问题 -->
+                                <div class="card mb-4">
+                                    <div class="card-header bg-warning text-dark">
+                                        <h5 class="mb-0">
+                                            <i class="fas fa-exclamation-triangle me-2"></i>全国性分析问题
+                                        </h5>
+                                    </div>
+                                    <div class="card-body">
+                                        <div id="detailRecordAll" class="markdown-content"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <!-- 右侧病历信息区域（固定位置） -->
+                    <div class="col-lg-4">
+                        <div class="card" style="position: fixed; right: 20px; top: 100px; width: calc(33.333% - 40px); height: calc(100vh - 140px); overflow: hidden;">
+                            <div class="card-header bg-info text-white">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-file-medical me-2"></i>病历信息
+                                </h5>
+                            </div>
+                            <div class="card-body p-0">
+                                <div id="detailRecord" class="markdown-content" style="height: calc(100vh - 200px); overflow-y: auto; padding: 1rem;">
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- 脚本 -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentRecordId = null;
+        let currentRecordData = null;
+
+        // 简单的 Markdown 转 HTML 函数（处理标题和表格）
+        function simpleMarkdownToHtml(text) {
+            if (!text) return text;
+            
+            // 处理标题 ## 
+            text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+            text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+            
+            // 处理粗体 **text**
+            text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            
+            // 处理 Markdown 表格
+            const lines = text.split('\n');
+            let result = [];
+            let inTable = false;
+            let tableRows = [];
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                
+                // 检测表格行（以 | 开头和结尾）
+                if (line.startsWith('|') && line.endsWith('|')) {
+                    if (!inTable) {
+                        inTable = true;
+                        tableRows = [];
+                    }
+                    tableRows.push(line);
+                } else {
+                    // 如果之前在表格中，现在不是表格行了，输出表格
+                    if (inTable) {
+                        result.push(convertTableToHtml(tableRows));
+                        inTable = false;
+                        tableRows = [];
+                    }
+                    result.push(line);
+                }
+            }
+            
+            // 处理最后的表格
+            if (inTable && tableRows.length > 0) {
+                result.push(convertTableToHtml(tableRows));
+            }
+            
+            return result.join('\n');
+        }
+        
+        // 将 Markdown 表格行转换为 HTML 表格
+        function convertTableToHtml(rows) {
+            if (rows.length < 2) return rows.join('\n');
+            
+            let html = '<table class="table table-striped table-bordered">\n<thead>\n<tr>\n';
+            
+            // 处理表头（第一行）
+            const headerCells = rows[0].split('|').filter(cell => cell.trim() !== '');
+            headerCells.forEach(cell => {
+                html += `<th>${cell.trim()}</th>\n`;
+            });
+            html += '</tr>\n</thead>\n<tbody>\n';
+            
+            // 跳过分隔行（第二行，通常是 |:---|:---|）
+            // 处理数据行（从第三行开始）
+            for (let i = 2; i < rows.length; i++) {
+                const cells = rows[i].split('|').filter(cell => cell.trim() !== '');
+                html += '<tr>\n';
+                cells.forEach(cell => {
+                    html += `<td>${cell.trim()}</td>\n`;
+                });
+                html += '</tr>\n';
+            }
+            
+            html += '</tbody>\n</table>';
+            return html;
+        }
+
+        // 解析 think 标签内容，分离思考过程和最终结果
+        function parseThinkContent(html) {
+            if (!html) return { thinkContent: null, resultContent: html };
+            
+            // 匹配新格式: <div class="think-wrapper"><think>...</think></div>
+            const newThinkRegex = /<div class="think-wrapper"><think>([\s\S]*?)<\/think><\/div>/i;
+            const newMatch = html.match(newThinkRegex);
+            
+            if (newMatch) {
+                const thinkContent = newMatch[1].trim();
+                // 移除 think-wrapper 部分，保留后面的正式结果
+                const resultContent = html.replace(newThinkRegex, '').trim();
+                return { thinkContent, resultContent };
+            }
+            
+            // 兼容旧格式: <p><think>...</think>
+            const oldThinkRegex = /<p>\s*<think>([\s\S]*?)<\/think>/i;
+            const oldMatch = html.match(oldThinkRegex);
+            
+            if (oldMatch) {
+                const thinkContent = oldMatch[1].trim();
+                let resultContent = html.replace(/<p>\s*<think>[\s\S]*?<\/think>/i, '').trim();
+                
+                if (resultContent && !resultContent.startsWith('<h') && !resultContent.startsWith('<table')) {
+                    const firstPEnd = resultContent.indexOf('</p>');
+                    if (firstPEnd > 0) {
+                        const mdContent = resultContent.substring(0, firstPEnd);
+                        const restContent = resultContent.substring(firstPEnd + 4);
+                        resultContent = simpleMarkdownToHtml(mdContent) + restContent;
+                    }
+                }
+                
+                return { thinkContent, resultContent };
+            }
+            
+            return { thinkContent: null, resultContent: html };
+        }
+
+        // 解析 count 字段（JSON字符串）
+        function parseCountData(countStr) {
+            if (!countStr) return null;
+            try {
+                // count 可能是 JSON 字符串，需要解析
+                if (typeof countStr === 'string') {
+                    return JSON.parse(countStr);
+                }
+                return countStr;
+            } catch (e) {
+                console.warn('解析 count 数据失败:', e);
+                return null;
+            }
+        }
+
+        // 生成评分统计卡片（使用 count 字段数据）
+        function generateScoreCard(countData) {
+            if (!countData) return '';
+            
+            const defectStatistics = countData.defect_statistics || {};
+            const dimensionStatistics = countData.dimension_statistics || {};
+            const details = countData.details || {};
+            
+            const score = details['总分'] || 0;
+            const grade = details['病历等级'] || '未知';
+            
+            // 患者基本信息
+            const patientName = details['患者姓名'] || '';
+            const cardNo = details['门诊卡号'] || '';
+            const visitTime = details['就诊时间'] || '';
+            const department = details['就诊科室'] || '';
+            
+            // 根据分数确定颜色
+            let scoreColor = 'success';  // 绿色 >=90
+            if (score < 75) {
+                scoreColor = 'danger';   // 红色 <75
+            } else if (score < 90) {
+                scoreColor = 'warning';  // 黄色 75-89
+            }
+            
+            // 根据等级确定徽章颜色
+            let gradeColor = 'success';
+            if (grade.includes('丙')) {
+                gradeColor = 'danger';
+            } else if (grade.includes('乙')) {
+                gradeColor = 'warning';
+            }
+            
+            // 缺陷统计（使用新键名）
+            const fatal = defectStatistics['致命缺陷'] || 0;
+            const major = defectStatistics['重大缺陷'] || 0;
+            const minor = defectStatistics['一般缺陷'] || 0;
+            
+            // 维度统计
+            const dimensions = [
+                { key: '安全性', label: '安全', color: 'danger' },
+                { key: '逻辑一致性', label: '逻辑', color: 'primary' },
+                { key: '规范性', label: '规范', color: 'warning' },
+                { key: '完整性', label: '完整', color: 'info' },
+                { key: '真实性', label: '真实', color: 'success' },
+                { key: '及时性', label: '及时', color: 'secondary' }
+            ];
+            
+            // 生成维度统计行
+            let dimensionHtml = '';
+            if (Object.keys(dimensionStatistics).length > 0) {
+                dimensionHtml = `
+                    <!-- 第三行：维度统计 -->
+                    <div class="row mt-3">
+                        ${dimensions.map(dim => `
+                            <div class="col-2">
+                                <div class="card bg-${dim.color} bg-opacity-10 border-${dim.color} border-opacity-25 h-100">
+                                    <div class="card-body text-center py-2 px-1">
+                                        <h5 class="mb-0 text-${dim.color}">${dimensionStatistics[dim.key] || 0}</h5>
+                                        <small class="text-${dim.color}" style="font-size: 0.7rem;">${dim.label}</small>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+            
+            // 生成患者基本信息卡片
+            let patientInfoHtml = '';
+            if (patientName || cardNo || visitTime || department) {
+                patientInfoHtml = `
+                    <!-- 患者基本信息 -->
+                    <div class="card mb-3 border-0 shadow-sm">
+                        <div class="card-body py-2">
+                            <div class="row align-items-center">
+                                <div class="col-auto">
+                                    <i class="fas fa-user-circle text-primary" style="font-size: 1.5rem;"></i>
+                                </div>
+                                <div class="col">
+                                    <div class="row">
+                                        <div class="col-md-3 col-6 mb-1">
+                                            <small class="text-muted">患者姓名</small>
+                                            <div class="fw-bold">${patientName || '-'}</div>
+                                        </div>
+                                        <div class="col-md-3 col-6 mb-1">
+                                            <small class="text-muted">门诊卡号</small>
+                                            <div class="fw-bold">${cardNo || '-'}</div>
+                                        </div>
+                                        <div class="col-md-3 col-6 mb-1">
+                                            <small class="text-muted">就诊时间</small>
+                                            <div class="fw-bold">${visitTime || '-'}</div>
+                                        </div>
+                                        <div class="col-md-3 col-6 mb-1">
+                                            <small class="text-muted">就诊科室</small>
+                                            <div class="fw-bold">${department || '-'}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            return `
+                <div class="score-summary-card mb-4">
+                    ${patientInfoHtml}
+                    <!-- 第一行：总分和等级 -->
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <div class="card border-0 shadow-sm h-100">
+                                <div class="card-body text-center py-3">
+                                    <h2 class="mb-1 text-${scoreColor}" style="font-size: 2.5rem; font-weight: 700;">${score}</h2>
+                                    <small class="text-muted">总分</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="card border-0 shadow-sm h-100">
+                                <div class="card-body text-center py-3 d-flex flex-column justify-content-center">
+                                    <span class="badge bg-${gradeColor} fs-5 px-3 py-2 mb-1">${grade}</span>
+                                    <small class="text-muted">病历等级</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 第二行：缺陷统计 -->
+                    <div class="row">
+                        <div class="col-4">
+                            <div class="card bg-danger bg-opacity-10 border-danger border-opacity-25 h-100">
+                                <div class="card-body text-center py-2">
+                                    <h4 class="mb-0 text-danger">${fatal}</h4>
+                                    <small class="text-danger">致命缺陷</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="card bg-warning bg-opacity-10 border-warning border-opacity-25 h-100">
+                                <div class="card-body text-center py-2">
+                                    <h4 class="mb-0 text-warning">${major}</h4>
+                                    <small class="text-warning">重大缺陷</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="card bg-info bg-opacity-10 border-info border-opacity-25 h-100">
+                                <div class="card-body text-center py-2">
+                                    <h4 class="mb-0 text-info">${minor}</h4>
+                                    <small class="text-info">一般缺陷</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    ${dimensionHtml}
+                </div>
+            `;
+        }
+
+        // 格式化 record_rating 内容，处理 think 标签
+        function formatRatingContent(html, countData) {
+            const { thinkContent, resultContent } = parseThinkContent(html);
+            
+            // 生成统计卡片（从 count 数据）
+            const scoreCard = generateScoreCard(countData);
+            
+            let result = scoreCard;
+            
+            // 添加质控结果内容
+            result += `
+                <div class="rating-result">
+                    ${resultContent}
+                </div>
+            `;
+            
+            // 添加 AI 思考过程折叠区域
+            if (thinkContent) {
+                result += `
+                    <div class="think-section mt-4 pt-3 border-top">
+                        <button class="btn btn-outline-secondary btn-sm" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#thinkProcessHistory" 
+                                aria-expanded="false" aria-controls="thinkProcessHistory">
+                            <i class="fas fa-brain me-1"></i>查看 AI 思考过程
+                        </button>
+                        <div class="collapse mt-3" id="thinkProcessHistory">
+                            <div class="card">
+                                <div class="card-body think-content">
+                                    ${thinkContent}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            return result;
+        }
+
+        // 下拉框选择变化
+        async function onHistorySelectChange() {
+            const select = document.getElementById('historySelect');
+            const recordId = select.value;
+            
+            if (!recordId) {
+                document.getElementById('detailSection').style.display = 'none';
+                currentRecordId = null;
+                currentRecordData = null;
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/history/${recordId}`);
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    currentRecordId = recordId;
+                    currentRecordData = result.data;
+                    
+                    // 解析 count 数据
+                    const countData = parseCountData(currentRecordData.count);
+                    
+                    // 填充详情区域内容（处理 think 标签和 count 统计卡片）
+                    document.getElementById('detailRecordRating').innerHTML = formatRatingContent(currentRecordData.record_rating, countData);
+                    document.getElementById('detailRecordAll').innerHTML = currentRecordData.record_all;
+                    document.getElementById('detailRecord').innerHTML = currentRecordData.record;
+                    document.getElementById('detailRecordName').textContent = currentRecordData.record_name || `分析记录 #${recordId}`;
+                    document.getElementById('detailRecordFilename').textContent = currentRecordData.record_filename;
+                    document.getElementById('detailStandardFilename').textContent = currentRecordData.standard_filename;
+                    document.getElementById('detailTimestamp').textContent = new Date(currentRecordData.timestamp).toLocaleString('zh-CN');
+                    
+                    // 显示详情区域
+                    document.getElementById('detailSection').style.display = 'block';
+                    document.getElementById('detailSection').scrollIntoView({ behavior: 'smooth' });
+                } else {
+                    throw new Error(result.message || '获取详情失败');
+                }
+            } catch (error) {
+                console.error('获取详情失败:', error);
+                showAlert('获取详情失败: ' + error.message, 'danger');
+                select.value = '';
+                document.getElementById('detailSection').style.display = 'none';
+            }
+        }
+
+        // 删除选中记录
+        async function deleteSelectedRecord() {
+            const select = document.getElementById('historySelect');
+            const recordId = select.value;
+            
+            if (!recordId) {
+                showAlert('请先选择一条记录', 'warning');
+                return;
+            }
+            
+            if (!confirm(`确定要删除记录 #${recordId} 吗？此操作不可恢复。`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/history/${recordId}/delete`);
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    location.reload();
+                } else {
+                    throw new Error(result.message || '删除失败');
+                }
+            } catch (error) {
+                console.error('删除失败:', error);
+                showAlert('删除失败: ' + error.message, 'danger');
+            }
+        }
+
+        // 清除选择
+        function clearSelection() {
+            const select = document.getElementById('historySelect');
+            select.value = '';
+            document.getElementById('detailSection').style.display = 'none';
+            currentRecordId = null;
+            currentRecordData = null;
+        }
+
+        // 显示警告消息
+        function showAlert(message, type = 'info') {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+            alertDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            const container = document.querySelector('.container');
+            container.insertBefore(alertDiv, container.firstChild);
+            
+            setTimeout(() => {
+                if (alertDiv.parentNode) {
+                    alertDiv.remove();
+                }
+            }, 5000);
+        }
+
+        // 下载报告
+        function downloadReport() {
+            if (!currentRecordData) {
+                showAlert('请先选择并查看一条记录', 'warning');
+                return;
+            }
+            
+            const content = `病历等级分析：${currentRecordData.record_rating}\n\n全国性分析问题：${currentRecordData.record_all}\n\n病历信息：${currentRecordData.record}`;
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `病历分析报告_${currentRecordData.record_filename}_${currentRecordData.id}.txt`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // ✓ 修改记录名称
+        async function renameRecord() {
+            if (!currentRecordId || !currentRecordData) {
+                showAlert('请先选择一条记录', 'warning');
+                return;
+            }
+            
+            const currentName = currentRecordData.record_name || `分析记录 #${currentRecordId}`;
+            const newName = prompt('请输入新的记录名称:', currentName);
+            if (newName === null || newName.trim() === '') {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/api/history/${currentRecordId}/rename`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        name: newName.trim()
+                    })
+                });
+                
+                const result = await response.json();
+                if (result.status === 'success') {
+                    showAlert('记录名称已修改', 'success');
+                    currentRecordData.record_name = newName.trim();
+                    document.getElementById('detailRecordName').textContent = newName.trim();
+                    
+                    const select = document.getElementById('historySelect');
+                    const selectedOption = select.options[select.selectedIndex];
+                    const timestamp = new Date(currentRecordData.timestamp).toLocaleString('zh-CN').substring(0, 16);
+                    selectedOption.text = `${newName.trim()} (${timestamp})`;
+                } else {
+                    throw new Error(result.message || '修改失败');
+                }
+            } catch (error) {
+                console.error('修改失败:', error);
+                showAlert('修改失败: ' + error.message, 'danger');
+            }
+        }
+
+        // 页面加载完成后的初始化
+        document.addEventListener('DOMContentLoaded', function() {
+            const tables = document.querySelectorAll('table');
+            tables.forEach(table => {
+                table.classList.add('table', 'table-striped', 'table-bordered');
+            });
+            
+            const select = document.getElementById('historySelect');
+            if (select) {
+                select.addEventListener('change', onHistorySelectChange);
+            }
+            
+            document.getElementById('detailSection').style.display = 'none';
+        });
+    </script>
+</body>
+</html>

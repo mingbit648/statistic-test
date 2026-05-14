@@ -1,0 +1,966 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>病历分析系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <link href="/static/style.css" rel="stylesheet">
+</head>
+<body>
+    <div class="container-fluid">
+        <!-- 顶部导航栏 -->
+        <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+            <div class="container">
+                <a class="navbar-brand" href="/">
+                    <i class="fas fa-file-medical me-2"></i>病历分析系统
+                </a>
+                <div class="navbar-nav ms-auto">
+                    <a class="nav-link" href="/standards">
+                        <i class="fas fa-book me-1"></i>知识库
+                    </a>
+                    <a class="nav-link" href="/history">
+                        <i class="fas fa-history me-1"></i>历史记录
+                    </a>
+                </div>
+            </div>
+        </nav>
+
+        <!-- 主要内容区域 -->
+        <div class="row g-0">
+            <!-- 左侧分析结果区域 -->
+            <div class="col-lg-8">
+                <div class="p-4">
+                    <!-- 文件上传区域 -->
+                    <div class="card mb-4">
+                        <div class="card-header bg-primary text-white">
+                            <h5 class="mb-0">
+                                <i class="fas fa-upload me-2"></i>文件上传
+                            </h5>
+                        </div>
+                        <div class="card-body">
+                            <!-- 当前使用的标准提示 -->
+                            <div id="currentStandardInfo" class="alert alert-info mb-3">
+                                <i class="fas fa-spinner fa-spin me-2"></i>正在加载标准信息...
+                            </div>
+                            
+                            <form id="uploadForm" enctype="multipart/form-data">
+                                <div class="mb-3">
+                                    <label for="recordFile" class="form-label">
+                                        <i class="fas fa-file-medical me-2"></i>病历文件
+                                    </label>
+                                    <input class="form-control" type="file" id="recordFile" name="record_file" accept=".xml,.md,.txt,.json" required>
+                                    <div class="form-text">支持 .xml, .md, .txt, .json 格式的病历文件</div>
+                                </div>
+                                <div class="d-grid">
+                                    <button type="submit" class="btn btn-success btn-lg" id="analyzeBtn">
+                                        <i class="fas fa-play-circle me-2"></i>开始分析
+                                    </button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+
+                    <!-- 分析进度显示区域 -->
+                    <div id="analysisProgress" style="display: none;">
+                        <div class="card mb-4">
+                            <div class="card-header bg-info text-white">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-cogs me-2"></i>分析进度
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="d-flex align-items-center mb-3">
+                                    <div class="spinner-border text-primary me-3" role="status">
+                                        <span class="visually-hidden">分析中...</span>
+                                    </div>
+                                    <div>
+                                        <h6 class="mb-1">正在分析病历文件...</h6>
+                                        <div class="progress" style="height: 8px; width: 300px;">
+                                            <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" role="progressbar" style="width: 0%"></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="row">
+                                    <div class="col-md-6">
+                                        <div class="d-flex justify-content-between">
+                                            <span class="text-muted">当前状态:</span>
+                                            <span id="currentStatus" class="fw-bold">准备中</span>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-6">
+                                        <div class="d-flex justify-content-between">
+                                            <span class="text-muted">已用时间:</span>
+                                            <span id="elapsedTime" class="fw-bold">0s</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- 分析结果区域 -->
+                    <div id="analysisResult" style="display: none;">
+                        <!-- 耗时统计 -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-secondary text-white">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-clock me-2"></i>分析统计
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div class="row text-center">
+                                    <div class="col-md-4">
+                                        <div class="border rounded p-3">
+                                            <h3 id="totalTime" class="text-primary mb-1">0s</h3>
+                                            <small class="text-muted">总耗时</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="border rounded p-3">
+                                            <h3 id="fileSize" class="text-success mb-1">0 KB</h3>
+                                            <small class="text-muted">文件大小</small>
+                                        </div>
+                                    </div>
+                                    <div class="col-md-4">
+                                        <div class="border rounded p-3">
+                                            <h3 id="analysisTime" class="text-warning mb-1">0s</h3>
+                                            <small class="text-muted">分析时间</small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 病历等级分析 -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-success text-white">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-chart-bar me-2"></i>病历等级分析
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="recordRating" class="markdown-content"></div>
+                            </div>
+                        </div>
+
+                        <!-- 全国性分析问题 -->
+                        <div class="card mb-4">
+                            <div class="card-header bg-warning text-dark">
+                                <h5 class="mb-0">
+                                    <i class="fas fa-exclamation-triangle me-2"></i>全国性分析问题
+                                </h5>
+                            </div>
+                            <div class="card-body">
+                                <div id="recordAll" class="markdown-content"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 右侧病历信息区域 -->
+            <div class="col-lg-4 bg-light">
+                <div class="p-4 fixed-record-info" style="position: sticky; top: 0; height: 100vh; overflow: hidden;">
+                    <h5 class="mb-3">
+                        <i class="fas fa-info-circle me-2"></i>病历信息
+                    </h5>
+                    <div id="recordInfo" class="record-info-content" style="height: calc(100vh - 200px); overflow-y: auto; border: 1px solid #dee2e6; border-radius: 0.375rem; padding: 1rem; background-color: white;">
+                        <div class="alert alert-info">
+                            <i class="fas fa-info-circle me-2"></i>
+                            请上传病历文件进行分析
+                        </div>
+                    </div>
+                    
+                    <!-- 操作按钮区域 -->
+                    <div class="mt-4" id="actionButtons" style="display: none;">
+                        <div class="d-grid gap-2">
+                            <button class="btn btn-primary" onclick="saveToHistory()">
+                                <i class="fas fa-save me-2"></i>保存到历史记录
+                            </button>
+                            <button class="btn btn-outline-secondary" onclick="refreshAnalysis()">
+                                <i class="fas fa-redo me-2"></i>重新分析
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 非阻塞加载提示 -->
+    <div class="position-fixed bottom-0 end-0 p-3" style="z-index: 11">
+        <div id="loadingToast" class="toast align-items-center text-white bg-primary border-0" role="alert" aria-live="assertive" aria-atomic="true">
+            <div class="d-flex">
+                <div class="toast-body">
+                    <i class="fas fa-spinner fa-spin me-2"></i>正在分析文件...
+                </div>
+                <button type="button" class="btn-close btn-close-white me-2 m-auto" data-bs-dismiss="toast" aria-label="Close"></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 脚本 -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        let currentResult = null;
+        let currentRecordId = null;
+        let hasSelectedStandard = false;
+
+        // 页面加载时检查标准文件状态
+        document.addEventListener('DOMContentLoaded', loadCurrentStandard);
+
+        // 加载当前选中的标准信息
+        async function loadCurrentStandard() {
+            try {
+                const response = await fetch('/api/standards');
+                const result = await response.json();
+                
+                const infoDiv = document.getElementById('currentStandardInfo');
+                const analyzeBtn = document.getElementById('analyzeBtn');
+                
+                if (result.status === 'success' && result.data.selected_id) {
+                    const selected = result.data.standards.find(s => s.id === result.data.selected_id);
+                    if (selected) {
+                        infoDiv.className = 'alert alert-success mb-3';
+                        infoDiv.innerHTML = `<i class="fas fa-check-circle me-2"></i>当前使用标准：<strong>${selected.filename}</strong>
+                            <a href="/standards" class="ms-2">切换标准</a>`;
+                        hasSelectedStandard = true;
+                        analyzeBtn.disabled = false;
+                        return;
+                    }
+                }
+                
+                infoDiv.className = 'alert alert-warning mb-3';
+                infoDiv.innerHTML = `<i class="fas fa-exclamation-triangle me-2"></i>尚未选择标准文件，<a href="/standards">请先到知识库选择标准</a>`;
+                hasSelectedStandard = false;
+                analyzeBtn.disabled = true;
+            } catch (error) {
+                console.error('加载标准信息失败:', error);
+            }
+        }
+
+        // 文件上传表单处理
+        document.getElementById('uploadForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            if (!hasSelectedStandard) {
+                showAlert('请先到知识库选择标准文件', 'warning');
+                return;
+            }
+            
+            const recordFile = document.getElementById('recordFile').files[0];
+            
+            if (!recordFile) {
+                showAlert('请选择病历文件', 'warning');
+                return;
+            }
+            
+            // 显示分析进度区域
+            document.getElementById('analysisProgress').style.display = 'block';
+            document.getElementById('analysisResult').style.display = 'none';
+            
+            // 显示加载提示
+            const submitBtn = document.querySelector('#uploadForm button[type="submit"]');
+            const originalText = submitBtn.innerHTML;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin me-2"></i>分析中...';
+            submitBtn.disabled = true;
+            
+            try {
+                const formData = new FormData();
+                formData.append('record_file', recordFile);
+                
+                const response = await fetch('/api/analyze', {
+                    method: 'POST',
+                    body: formData
+                });
+                
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    // 开始轮询任务状态
+                    startTaskPolling(result.task_id);
+                    showAlert('分析任务已开始，请等待...', 'info');
+                } else {
+                    showAlert('分析失败: ' + result.message, 'danger');
+                    // 隐藏进度区域
+                    document.getElementById('analysisProgress').style.display = 'none';
+                }
+            } catch (error) {
+                console.error('分析错误:', error);
+                showAlert('分析过程中发生错误: ' + error.message, 'danger');
+                // 隐藏进度区域
+                document.getElementById('analysisProgress').style.display = 'none';
+                // 恢复按钮状态
+                submitBtn.innerHTML = originalText;
+                submitBtn.disabled = false;
+            }
+        });
+
+        // 保存到历史记录
+        async function saveToHistory() {
+            if (!currentRecordId) {
+                showAlert('请先完成分析', 'warning');
+                return;
+            }
+            
+            try {
+                showAlert('结果已自动保存到历史记录', 'success');
+                
+                // 打开历史记录页面
+                setTimeout(() => {
+                    window.open('/history', '_blank');
+                }, 1000);
+            } catch (error) {
+                console.error('保存失败:', error);
+                showAlert('保存失败: ' + error.message, 'danger');
+            }
+        }
+
+        // 重新分析
+        function refreshAnalysis() {
+            // 清空表单
+            document.getElementById('uploadForm').reset();
+            
+            // 隐藏结果区域
+            document.getElementById('analysisResult').style.display = 'none';
+            document.getElementById('actionButtons').style.display = 'none';
+            
+            // 重置病历信息显示
+            document.getElementById('recordInfo').innerHTML = `
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle me-2"></i>
+                    请上传病历文件进行分析
+                </div>
+            `;
+            
+            currentResult = null;
+            currentRecordId = null;
+            
+            showAlert('已重置，请重新上传文件进行分析', 'info');
+        }
+
+        // 显示提示消息
+        function showAlert(message, type) {
+            const alertDiv = document.createElement('div');
+            alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+            alertDiv.innerHTML = `
+                ${message}
+                <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+            `;
+            
+            // 添加到页面顶部
+            const container = document.querySelector('.container-fluid');
+            container.insertBefore(alertDiv, container.firstChild);
+            
+            // 3秒后自动消失
+            setTimeout(() => {
+                if (alertDiv.parentNode) {
+                    alertDiv.remove();
+                }
+            }, 3000);
+        }
+
+        // 拖拽上传功能
+        function setupDragAndDrop() {
+            const dropZone = document.getElementById('uploadForm');
+            
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, preventDefaults, false);
+            });
+            
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+            
+            ['dragenter', 'dragover'].forEach(eventName => {
+                dropZone.addEventListener(eventName, highlight, false);
+            });
+            
+            ['dragleave', 'drop'].forEach(eventName => {
+                dropZone.addEventListener(eventName, unhighlight, false);
+            });
+            
+            function highlight() {
+                dropZone.classList.add('drag-over');
+            }
+            
+            function unhighlight() {
+                dropZone.classList.remove('drag-over');
+            }
+            
+            dropZone.addEventListener('drop', handleDrop, false);
+            
+            function handleDrop(e) {
+                const dt = e.dataTransfer;
+                const files = dt.files;
+                
+                if (files.length === 2) {
+                    // 自动填充文件输入框
+                    document.getElementById('recordFile').files = files;
+                    document.getElementById('standardFile').files = files;
+                } else {
+                    showAlert('请拖拽两个文件（病历文件和标准文件）', 'warning');
+                }
+            }
+        }
+
+        // 初始化拖拽功能
+        setupDragAndDrop();
+
+        // 分析任务轮询和进度更新功能
+        let currentTaskId = null;
+        let pollingInterval = null;
+        let pollingStartTime = null;
+        let notFoundRetryCount = 0;  // 任务不存在重试计数
+        const MAX_POLLING_TIME = 20 * 60 * 1000;  // 17分钟超时，需大于后端1000秒超时
+        const MAX_NOT_FOUND_RETRIES = 3;  // 任务不存在最大重试次数
+
+        // 开始轮询任务状态
+        function startTaskPolling(taskId) {
+            currentTaskId = taskId;
+            pollingStartTime = Date.now();
+            notFoundRetryCount = 0;  // 重置重试计数
+            
+            // 延迟500ms后开始首次查询，避免任务还未完全创建
+            setTimeout(() => {
+                checkTaskStatus();
+                
+                // 设置轮询间隔（每2秒查询一次）
+                pollingInterval = setInterval(() => {
+                    // 检查是否超过最大轮询时间
+                    if (Date.now() - pollingStartTime > MAX_POLLING_TIME) {
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                        
+                        showAlert('分析超时（超过10分钟），请重新上传文件开始新的分析', 'warning');
+                        document.getElementById('analysisProgress').style.display = 'none';
+                        
+                        const submitBtn = document.querySelector('#uploadForm button[type="submit"]');
+                        submitBtn.innerHTML = '<i class="fas fa-play-circle me-2"></i>开始分析';
+                        submitBtn.disabled = false;
+                        return;
+                    }
+                    
+                    checkTaskStatus();
+                }, 2000);
+            }, 500);
+        }
+
+        // 检查任务状态
+        async function checkTaskStatus() {
+            if (!currentTaskId) return;
+            
+            try {
+                const response = await fetch(`/api/analysis/task/${currentTaskId}`);
+                const result = await response.json();
+                
+                if (result.status === 'success') {
+                    const taskData = result.data;
+                    
+                    // 更新进度显示
+                    updateProgressDisplay(taskData);
+                    
+                    // 检查任务是否完成
+                    if (taskData.status === 'completed') {
+                        // 任务完成，停止轮询
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                        
+                        // 显示分析结果
+                        if (result.result) {
+                            displayAnalysisResult(result.result);
+                            showAlert('分析完成！', 'success');
+                        }
+                        
+                        // 恢复按钮状态
+                        const submitBtn = document.querySelector('#uploadForm button[type="submit"]');
+                        submitBtn.innerHTML = '<i class="fas fa-play-circle me-2"></i>开始分析';
+                        submitBtn.disabled = false;
+                        
+                    } else if (taskData.status === 'failed') {
+                        // 任务失败，停止轮询
+                        clearInterval(pollingInterval);
+                        pollingInterval = null;
+                        
+                        showAlert('分析失败: ' + (result.error || '未知错误'), 'danger');
+                        
+                        // 隐藏进度区域
+                        document.getElementById('analysisProgress').style.display = 'none';
+                        
+                        // 恢复按钮状态
+                        const submitBtn = document.querySelector('#uploadForm button[type="submit"]');
+                        submitBtn.innerHTML = '<i class="fas fa-play-circle me-2"></i>开始分析';
+                        submitBtn.disabled = false;
+                    }
+                } else if (result.status === 'error') {
+                    // 处理任务错误情况
+                    console.warn('任务错误:', result.message);
+                    
+                    // 任务不存在时，先重试几次再报错
+                    if (result.data && result.data.status === 'not_found') {
+                        notFoundRetryCount++;
+                        if (notFoundRetryCount < MAX_NOT_FOUND_RETRIES) {
+                            console.log(`任务暂未找到，等待重试 (${notFoundRetryCount}/${MAX_NOT_FOUND_RETRIES})`);
+                            return;  // 继续等待下次轮询
+                        }
+                    }
+                    
+                    // 停止轮询
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                    
+                    // 区分不同的错误类型
+                    let errorMessage = '分析任务出错，请重新上传文件开始新的分析';
+                    
+                    if (result.data && result.data.status === 'expired') {
+                        errorMessage = '分析任务已过期（超过24小时），请重新上传文件开始新的分析';
+                    } else if (result.data && result.data.status === 'not_found') {
+                        errorMessage = '分析任务不存在，请重新上传文件开始新的分析';
+                    }
+                    
+                    showAlert(errorMessage, 'warning');
+                    
+                    // 隐藏进度区域
+                    document.getElementById('analysisProgress').style.display = 'none';
+                    
+                    // 恢复按钮状态
+                    const submitBtn = document.querySelector('#uploadForm button[type="submit"]');
+                    submitBtn.innerHTML = '<i class="fas fa-play-circle me-2"></i>开始分析';
+                    submitBtn.disabled = false;
+                } else {
+                    console.error('查询任务状态失败:', result);
+                }
+            } catch (error) {
+                console.error('查询任务状态错误:', error);
+            }
+        }
+
+        // 更新进度显示
+        function updateProgressDisplay(taskData) {
+            // 更新进度条
+            const progressBar = document.getElementById('progressBar');
+            progressBar.style.width = taskData.progress + '%';
+            progressBar.setAttribute('aria-valuenow', taskData.progress);
+            progressBar.textContent = taskData.progress + '%';
+            
+            // 更新状态文本
+            document.getElementById('currentStatus').textContent = taskData.current_step;
+            
+            // 更新已用时间
+            const elapsedTime = taskData.elapsed_time || 0;
+            document.getElementById('elapsedTime').textContent = elapsedTime.toFixed(1) + '秒';
+            
+            // 更新总耗时（如果已完成）
+            if (taskData.total_time) {
+                document.getElementById('totalTime').textContent = taskData.total_time.toFixed(1) + '秒';
+            }
+        }
+
+        // 简单的 Markdown 转 HTML 函数（处理标题和表格）
+        function simpleMarkdownToHtml(text) {
+            if (!text) return text;
+            
+            // 处理标题 ## 
+            text = text.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+            text = text.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+            
+            // 处理粗体 **text**
+            text = text.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+            
+            // 处理 Markdown 表格
+            const lines = text.split('\n');
+            let result = [];
+            let inTable = false;
+            let tableRows = [];
+            
+            for (let i = 0; i < lines.length; i++) {
+                const line = lines[i].trim();
+                
+                // 检测表格行（以 | 开头和结尾）
+                if (line.startsWith('|') && line.endsWith('|')) {
+                    if (!inTable) {
+                        inTable = true;
+                        tableRows = [];
+                    }
+                    tableRows.push(line);
+                } else {
+                    // 如果之前在表格中，现在不是表格行了，输出表格
+                    if (inTable) {
+                        result.push(convertTableToHtml(tableRows));
+                        inTable = false;
+                        tableRows = [];
+                    }
+                    result.push(line);
+                }
+            }
+            
+            // 处理最后的表格
+            if (inTable && tableRows.length > 0) {
+                result.push(convertTableToHtml(tableRows));
+            }
+            
+            return result.join('\n');
+        }
+        
+        // 将 Markdown 表格行转换为 HTML 表格
+        function convertTableToHtml(rows) {
+            if (rows.length < 2) return rows.join('\n');
+            
+            let html = '<table class="table table-striped table-bordered">\n<thead>\n<tr>\n';
+            
+            // 处理表头（第一行）
+            const headerCells = rows[0].split('|').filter(cell => cell.trim() !== '');
+            headerCells.forEach(cell => {
+                html += `<th>${cell.trim()}</th>\n`;
+            });
+            html += '</tr>\n</thead>\n<tbody>\n';
+            
+            // 跳过分隔行（第二行，通常是 |:---|:---|）
+            // 处理数据行（从第三行开始）
+            for (let i = 2; i < rows.length; i++) {
+                const cells = rows[i].split('|').filter(cell => cell.trim() !== '');
+                html += '<tr>\n';
+                cells.forEach(cell => {
+                    html += `<td>${cell.trim()}</td>\n`;
+                });
+                html += '</tr>\n';
+            }
+            
+            html += '</tbody>\n</table>';
+            return html;
+        }
+
+        // 解析 think 标签内容，分离思考过程和最终结果
+        function parseThinkContent(html) {
+            if (!html) return { thinkContent: null, resultContent: html };
+            
+            // 匹配新格式: <div class="think-wrapper"><think>...</think></div>
+            const newThinkRegex = /<div class="think-wrapper"><think>([\s\S]*?)<\/think><\/div>/i;
+            const newMatch = html.match(newThinkRegex);
+            
+            if (newMatch) {
+                const thinkContent = newMatch[1].trim();
+                // 移除 think-wrapper 部分，保留后面的正式结果
+                const resultContent = html.replace(newThinkRegex, '').trim();
+                return { thinkContent, resultContent };
+            }
+            
+            // 兼容旧格式: <p><think>...</think>
+            const oldThinkRegex = /<p>\s*<think>([\s\S]*?)<\/think>/i;
+            const oldMatch = html.match(oldThinkRegex);
+            
+            if (oldMatch) {
+                const thinkContent = oldMatch[1].trim();
+                let resultContent = html.replace(/<p>\s*<think>[\s\S]*?<\/think>/i, '').trim();
+                
+                if (resultContent && !resultContent.startsWith('<h') && !resultContent.startsWith('<table')) {
+                    const firstPEnd = resultContent.indexOf('</p>');
+                    if (firstPEnd > 0) {
+                        const mdContent = resultContent.substring(0, firstPEnd);
+                        const restContent = resultContent.substring(firstPEnd + 4);
+                        resultContent = simpleMarkdownToHtml(mdContent) + restContent;
+                    }
+                }
+                
+                return { thinkContent, resultContent };
+            }
+            
+            return { thinkContent: null, resultContent: html };
+        }
+
+
+
+        // 解析 count 字段（JSON字符串）
+        function parseCountData(countStr) {
+            if (!countStr) return null;
+            try {
+                // count 可能是 JSON 字符串，需要解析
+                if (typeof countStr === 'string') {
+                    return JSON.parse(countStr);
+                }
+                return countStr;
+            } catch (e) {
+                console.warn('解析 count 数据失败:', e);
+                return null;
+            }
+        }
+
+        // 生成评分统计卡片（使用 count 字段数据）
+        function generateScoreCard(countData) {
+            if (!countData) return '';
+            
+            const defectStatistics = countData.defect_statistics || {};
+            const dimensionStatistics = countData.dimension_statistics || {};
+            const details = countData.details || {};
+            
+            const score = details['总分'] || 0;
+            const grade = details['病历等级'] || '未知';
+            
+            // 患者基本信息
+            const patientName = details['患者姓名'] || '';
+            const cardNo = details['门诊卡号'] || '';
+            const visitTime = details['就诊时间'] || '';
+            const department = details['就诊科室'] || '';
+            
+            // 根据分数确定颜色
+            let scoreColor = 'success';  // 绿色 >=90
+            if (score < 75) {
+                scoreColor = 'danger';   // 红色 <75
+            } else if (score < 90) {
+                scoreColor = 'warning';  // 黄色 75-89
+            }
+            
+            // 根据等级确定徽章颜色
+            let gradeColor = 'success';
+            if (grade.includes('丙')) {
+                gradeColor = 'danger';
+            } else if (grade.includes('乙')) {
+                gradeColor = 'warning';
+            }
+            
+            // 缺陷统计（使用新键名）
+            const fatal = defectStatistics['致命缺陷'] || 0;
+            const major = defectStatistics['重大缺陷'] || 0;
+            const minor = defectStatistics['一般缺陷'] || 0;
+            
+            // 维度统计
+            const dimensions = [
+                { key: '安全性', label: '安全', color: 'danger' },
+                { key: '逻辑一致性', label: '逻辑', color: 'primary' },
+                { key: '规范性', label: '规范', color: 'warning' },
+                { key: '完整性', label: '完整', color: 'info' },
+                { key: '真实性', label: '真实', color: 'success' },
+                { key: '及时性', label: '及时', color: 'secondary' }
+            ];
+            
+            // 生成维度统计行
+            let dimensionHtml = '';
+            if (Object.keys(dimensionStatistics).length > 0) {
+                dimensionHtml = `
+                    <!-- 第三行：维度统计 -->
+                    <div class="row mt-3">
+                        ${dimensions.map(dim => `
+                            <div class="col-2">
+                                <div class="card bg-${dim.color} bg-opacity-10 border-${dim.color} border-opacity-25 h-100">
+                                    <div class="card-body text-center py-2 px-1">
+                                        <h5 class="mb-0 text-${dim.color}">${dimensionStatistics[dim.key] || 0}</h5>
+                                        <small class="text-${dim.color}" style="font-size: 0.7rem;">${dim.label}</small>
+                                    </div>
+                                </div>
+                            </div>
+                        `).join('')}
+                    </div>
+                `;
+            }
+            
+            // 生成患者基本信息卡片
+            let patientInfoHtml = '';
+            if (patientName || cardNo || visitTime || department) {
+                patientInfoHtml = `
+                    <!-- 患者基本信息 -->
+                    <div class="card mb-3 border-0 shadow-sm">
+                        <div class="card-body py-2">
+                            <div class="row align-items-center">
+                                <div class="col-auto">
+                                    <i class="fas fa-user-circle text-primary" style="font-size: 1.5rem;"></i>
+                                </div>
+                                <div class="col">
+                                    <div class="row">
+                                        <div class="col-md-3 col-6 mb-1">
+                                            <small class="text-muted">患者姓名</small>
+                                            <div class="fw-bold">${patientName || '-'}</div>
+                                        </div>
+                                        <div class="col-md-3 col-6 mb-1">
+                                            <small class="text-muted">门诊卡号</small>
+                                            <div class="fw-bold">${cardNo || '-'}</div>
+                                        </div>
+                                        <div class="col-md-3 col-6 mb-1">
+                                            <small class="text-muted">就诊时间</small>
+                                            <div class="fw-bold">${visitTime || '-'}</div>
+                                        </div>
+                                        <div class="col-md-3 col-6 mb-1">
+                                            <small class="text-muted">就诊科室</small>
+                                            <div class="fw-bold">${department || '-'}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            return `
+                <div class="score-summary-card mb-4">
+                    ${patientInfoHtml}
+                    <!-- 第一行：总分和等级 -->
+                    <div class="row mb-3">
+                        <div class="col-6">
+                            <div class="card border-0 shadow-sm h-100">
+                                <div class="card-body text-center py-3">
+                                    <h2 class="mb-1 text-${scoreColor}" style="font-size: 2.5rem; font-weight: 700;">${score}</h2>
+                                    <small class="text-muted">总分</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-6">
+                            <div class="card border-0 shadow-sm h-100">
+                                <div class="card-body text-center py-3 d-flex flex-column justify-content-center">
+                                    <span class="badge bg-${gradeColor} fs-5 px-3 py-2 mb-1">${grade}</span>
+                                    <small class="text-muted">病历等级</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- 第二行：缺陷统计 -->
+                    <div class="row">
+                        <div class="col-4">
+                            <div class="card bg-danger bg-opacity-10 border-danger border-opacity-25 h-100">
+                                <div class="card-body text-center py-2">
+                                    <h4 class="mb-0 text-danger">${fatal}</h4>
+                                    <small class="text-danger">致命缺陷</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="card bg-warning bg-opacity-10 border-warning border-opacity-25 h-100">
+                                <div class="card-body text-center py-2">
+                                    <h4 class="mb-0 text-warning">${major}</h4>
+                                    <small class="text-warning">重大缺陷</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-4">
+                            <div class="card bg-info bg-opacity-10 border-info border-opacity-25 h-100">
+                                <div class="card-body text-center py-2">
+                                    <h4 class="mb-0 text-info">${minor}</h4>
+                                    <small class="text-info">一般缺陷</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    ${dimensionHtml}
+                </div>
+            `;
+        }
+
+        // 格式化 record_rating 内容，处理 think 标签
+        function formatRatingContent(html, countData) {
+            const { thinkContent, resultContent } = parseThinkContent(html);
+            
+            // 生成统计卡片（从 count 数据）
+            const scoreCard = generateScoreCard(countData);
+            
+            let result = scoreCard;
+            
+            // 添加质控结果内容
+            result += `
+                <div class="rating-result">
+                    ${resultContent}
+                </div>
+            `;
+            
+            // 添加 AI 思考过程折叠区域
+            if (thinkContent) {
+                result += `
+                    <div class="think-section mt-4 pt-3 border-top">
+                        <button class="btn btn-outline-secondary btn-sm" type="button" 
+                                data-bs-toggle="collapse" data-bs-target="#thinkProcess" 
+                                aria-expanded="false" aria-controls="thinkProcess">
+                            <i class="fas fa-brain me-1"></i>查看 AI 思考过程
+                        </button>
+                        <div class="collapse mt-3" id="thinkProcess">
+                            <div class="card">
+                                <div class="card-body think-content">
+                                    ${thinkContent}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+            
+            return result;
+        }
+
+        // 显示分析结果
+        function displayAnalysisResult(result) {
+            currentResult = result.result;
+            currentRecordId = result.record_id;
+            
+            // ✓ 恢复按钮状态
+            const submitBtn = document.querySelector('#uploadForm button[type="submit"]');
+            submitBtn.innerHTML = '<i class="fas fa-play-circle me-2"></i>开始分析';
+            submitBtn.disabled = false;
+            
+            // 隐藏进度区域，显示结果区域
+            document.getElementById('analysisProgress').style.display = 'none';
+            document.getElementById('analysisResult').style.display = 'block';
+            document.getElementById('actionButtons').style.display = 'block';
+            
+            // 解析 count 数据
+            const countData = parseCountData(currentResult.count);
+            
+            // 显示分析结果（处理 think 标签和 count 统计卡片）
+            document.getElementById('recordRating').innerHTML = formatRatingContent(currentResult.record_rating, countData);
+            document.getElementById('recordAll').innerHTML = currentResult.record_all;
+            document.getElementById('recordInfo').innerHTML = currentResult.record;
+            
+            // 获取表单中的文件名信息
+            const recordFile = document.getElementById('recordFile').files[0];
+            const standardFile = document.getElementById('standardFile').files[0];
+            
+            // 更新耗时统计
+            const taskData = getTaskDataFromResponse();
+            if (taskData) {
+                document.getElementById('timeStats').innerHTML = `
+                    <div class="row">
+                        <div class="col-md-4">
+                            <div class="card bg-primary text-white">
+                                <div class="card-body text-center">
+                                    <h4>${taskData.total_time ? taskData.total_time.toFixed(1) : '0.0'}秒</h4>
+                                    <small>总耗时</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-success text-white">
+                                <div class="card-body text-center">
+                                    <h4>${recordFile ? recordFile.name : '未知文件'}</h4>
+                                    <small>病历文件</small>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-md-4">
+                            <div class="card bg-info text-white">
+                                <div class="card-body text-center">
+                                    <h4>${standardFile ? standardFile.name : '未知文件'}</h4>
+                                    <small>标准文件</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }
+        }
+        
+        // 从API响应中获取任务数据
+        function getTaskDataFromResponse() {
+            // 这里可以扩展为从API响应中获取更多任务信息
+            return {
+                total_time: parseFloat(document.getElementById('totalTime').textContent) || 0
+            };
+        }
+
+        // 页面卸载时清理轮询
+        window.addEventListener('beforeunload', function() {
+            if (pollingInterval) {
+                clearInterval(pollingInterval);
+            }
+        });
+    </script>
+</body>
+</html>
