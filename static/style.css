@@ -439,6 +439,22 @@ body {
     padding: 0.5rem;
 }
 
+.dify-config-panel {
+    background: #f8fbff;
+    border: 1px solid #d7e7ff;
+    border-radius: 8px;
+    padding: 1rem;
+}
+
+.dify-config-panel .input-group .form-control {
+    font-family: Consolas, "Courier New", monospace;
+}
+
+.dify-config-panel .badge {
+    font-weight: 600;
+    letter-spacing: 0;
+}
+
 /* 图标样式优化 */
 .fas, .fab {
     margin-right: 0.5rem;
@@ -553,4 +569,128 @@ body {
 .score-summary-card small {
     font-size: 0.8rem;
     font-weight: 500;
+}
+
+/* 并发测试页面 */
+.concurrency-page .card {
+    border-radius: 8px;
+}
+
+.concurrency-control-card {
+    position: sticky;
+    top: 1rem;
+}
+
+.concurrency-estimate {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.concurrency-estimate > div,
+.concurrency-stat {
+    background: #f8fbff;
+    border: 1px solid #d7e7ff;
+    border-radius: 8px;
+    padding: 0.85rem;
+}
+
+.concurrency-estimate span,
+.concurrency-stat span {
+    display: block;
+    color: #6c757d;
+    font-size: 0.8rem;
+    margin-bottom: 0.25rem;
+}
+
+.concurrency-estimate strong,
+.concurrency-stat strong {
+    display: block;
+    color: #2c3e50;
+    font-size: 1.35rem;
+    line-height: 1.2;
+}
+
+.batch-list {
+    max-height: 440px;
+    overflow-y: auto;
+}
+
+.batch-list-item {
+    display: flex;
+    width: 100%;
+    justify-content: space-between;
+    align-items: center;
+    gap: 0.75rem;
+    border: 0;
+    border-bottom: 1px solid #edf1f5;
+    background: #fff;
+    color: #2c3e50;
+    padding: 0.9rem 1rem;
+    text-align: left;
+}
+
+.batch-list-item:hover,
+.batch-list-item.active {
+    background: #f1f6ff;
+}
+
+.batch-list-item span:first-child {
+    min-width: 0;
+}
+
+.batch-list-item strong,
+.batch-list-item small {
+    display: block;
+}
+
+.batch-list-item small {
+    color: #6c757d;
+    margin-top: 0.2rem;
+}
+
+.concurrency-stat-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.concurrency-filter {
+    width: auto;
+    min-width: 150px;
+}
+
+.concurrency-detail-table {
+    max-height: 540px;
+    overflow: auto;
+    border: 1px solid #edf1f5;
+    border-radius: 8px;
+}
+
+.concurrency-detail-table thead th {
+    position: sticky;
+    top: 0;
+    background: #f8f9fa;
+    z-index: 1;
+}
+
+@media (max-width: 991px) {
+    .concurrency-control-card {
+        position: static;
+    }
+
+    .concurrency-stat-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+}
+
+@media (max-width: 576px) {
+    .concurrency-estimate,
+    .concurrency-stat-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .concurrency-filter {
+        width: 100%;
+    }
 }

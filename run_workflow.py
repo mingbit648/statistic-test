@@ -242,7 +242,7 @@ def main():
         "recoder": {
             "transfer_method": "local_file",
             "upload_file_id": record_id,
-            "type": "custom"
+            "type": "document"
         },
         "stand": {
             "transfer_method": "local_file",

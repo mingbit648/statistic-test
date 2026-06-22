@@ -1,11 +1,11 @@
 {
     "server": {
         "host": "0.0.0.0",
-        "port": 9999,
+        "port": 8889,
         "debug": false
     },
     "dify": {
-        "api_key": "",
+        "api_key": "app-yvBlX8tPgqyTwEfEBtk92M56",
         "base_url": "http://localhost/v1",
         "app_id": "your-app-id",
         "workflow_id": "your-workflow-id"
@@ -13,7 +13,12 @@
     "file": {
         "upload_dir": "uploads",
         "max_file_size": 10485760,
-        "allowed_extensions": [".xml", ".md", ".txt", ".json"]
+        "allowed_extensions": [
+            ".xml",
+            ".md",
+            ".txt",
+            ".json"
+        ]
     },
     "database": {
         "history_file": "data/history.json"

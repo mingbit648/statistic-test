@@ -31,52 +31,290 @@ HISTORY_FILE = config.history_file
 UPLOAD_DIR = config.upload_dir
 STANDARDS_DIR = "standards"
 STANDARDS_FILE = "data/standards.json"
+HISTORY_INDEX_FILE = "data/history_index.json"
+HISTORY_RECORDS_DIR = "data/history_records"
+CONCURRENCY_TESTS_FILE = "data/concurrency_tests.json"
+CONCURRENCY_MAX_TESTS_PER_RECORD = 100
+CONCURRENCY_MAX_ATTEMPTS_PER_ROUND = 100
+CONCURRENCY_RECORD_DISPATCH_INTERVAL_SECONDS = 2
 
 # 确保数据目录存在
 os.makedirs("data", exist_ok=True)
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 os.makedirs(STANDARDS_DIR, exist_ok=True)
+os.makedirs(HISTORY_RECORDS_DIR, exist_ok=True)
 
 # 分析任务管理
 TASKS_FILE = "data/tasks.json"  # 任务数据存储文件
+ANALYSIS_BATCHES_FILE = "data/analysis_batches.json"  # 首页分析批次数据存储文件
 analysis_executor = ThreadPoolExecutor(max_workers=2)  # 限制并发任务数
 TASK_EXPIRATION_TIME = 24 * 3600  # 24小时后过期
+HOME_ANALYSIS_MAX_CONCURRENCY = 20
+tasks_lock = threading.RLock()
+history_lock = threading.RLock()
+analysis_batches_lock = threading.RLock()
+concurrency_tests_lock = threading.Lock()
 
 # 确保任务数据目录存在
 os.makedirs("data", exist_ok=True)
 
 def load_tasks() -> dict:
     """加载任务数据"""
-    if os.path.exists(TASKS_FILE):
-        try:
-            with open(TASKS_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except (json.JSONDecodeError, FileNotFoundError):
-            return {}
+    with tasks_lock:
+        if os.path.exists(TASKS_FILE):
+            try:
+                with open(TASKS_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                return {}
     return {}
 
 def save_tasks(tasks: dict):
     """保存任务数据"""
-    with open(TASKS_FILE, "w", encoding="utf-8") as f:
-        json.dump(tasks, f, ensure_ascii=False, indent=2)
+    with tasks_lock:
+        with open(TASKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(tasks, f, ensure_ascii=False, indent=2)
+
+def load_analysis_batches() -> dict:
+    """加载首页分析批次数据"""
+    with analysis_batches_lock:
+        if os.path.exists(ANALYSIS_BATCHES_FILE):
+            try:
+                with open(ANALYSIS_BATCHES_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, dict) and isinstance(data.get("batches"), list):
+                    return data
+            except (json.JSONDecodeError, FileNotFoundError):
+                pass
+    return {"batches": []}
+
+def save_analysis_batches(data: dict):
+    """保存首页分析批次数据"""
+    with analysis_batches_lock:
+        with open(ANALYSIS_BATCHES_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
 # 全局任务存储
 global_analysis_tasks = load_tasks()
+global_analysis_batches = load_analysis_batches()
 
-def load_history() -> list:
-    """加载历史记录"""
-    if os.path.exists(HISTORY_FILE):
+def load_concurrency_tests() -> dict:
+    """加载并发测试批次数据"""
+    if os.path.exists(CONCURRENCY_TESTS_FILE):
         try:
-            with open(HISTORY_FILE, "r", encoding="utf-8") as f:
-                return json.load(f)
+            with open(CONCURRENCY_TESTS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("batches"), list):
+                return data
         except (json.JSONDecodeError, FileNotFoundError):
-            return []
+            pass
+    return {"batches": []}
+
+def save_concurrency_tests(data: dict):
+    """保存并发测试批次数据"""
+    with open(CONCURRENCY_TESTS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+global_concurrency_tests = load_concurrency_tests()
+
+def load_legacy_history() -> list:
+    """加载旧版完整历史记录文件。"""
+    with history_lock:
+        if os.path.exists(HISTORY_FILE):
+            try:
+                with open(HISTORY_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            except (json.JSONDecodeError, FileNotFoundError):
+                return []
     return []
 
-def save_history(history: list):
-    """保存历史记录"""
-    with open(HISTORY_FILE, "w", encoding="utf-8") as f:
-        json.dump(history, f, ensure_ascii=False, indent=2)
+def save_legacy_history(history: list):
+    """保存旧版完整历史记录文件。"""
+    with history_lock:
+        with open(HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(history, f, ensure_ascii=False, indent=2)
+
+def _history_detail_path(record_id: int) -> str:
+    return os.path.join(HISTORY_RECORDS_DIR, f"{record_id}.json")
+
+def _history_index_entry(item: dict, source_type: str, source_path: str) -> dict:
+    record_id = int(item["id"])
+    return {
+        "id": record_id,
+        "record_name": item.get("record_name", f"分析记录 #{record_id}"),
+        "timestamp": item.get("timestamp", ""),
+        "record_filename": item.get("record_filename", ""),
+        "standard_filename": item.get("standard_filename", ""),
+        "source_type": source_type,
+        "source_path": source_path,
+        "deleted": bool(item.get("deleted", False))
+    }
+
+def rebuild_history_index() -> list:
+    """从旧历史文件和新详情目录重建轻量历史索引。"""
+    entries = []
+
+    for item in load_legacy_history():
+        if isinstance(item, dict) and "id" in item:
+            entries.append(_history_index_entry(item, "legacy", HISTORY_FILE))
+
+    if os.path.exists(HISTORY_RECORDS_DIR):
+        for filename in os.listdir(HISTORY_RECORDS_DIR):
+            if not filename.endswith(".json"):
+                continue
+            path = os.path.join(HISTORY_RECORDS_DIR, filename)
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    item = json.load(f)
+                if isinstance(item, dict) and "id" in item:
+                    entries.append(_history_index_entry(item, "record_file", path))
+            except (json.JSONDecodeError, OSError):
+                continue
+
+    deduped = {}
+    for entry in entries:
+        deduped[entry["id"]] = entry
+    entries = sorted(deduped.values(), key=lambda item: item["id"])
+    save_history_index(entries)
+    return entries
+
+def load_history_index() -> list:
+    """加载轻量历史索引；缺失或损坏时自动重建。"""
+    with history_lock:
+        if os.path.exists(HISTORY_INDEX_FILE):
+            try:
+                with open(HISTORY_INDEX_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                if isinstance(data, list):
+                    return data
+            except (json.JSONDecodeError, FileNotFoundError):
+                pass
+        return rebuild_history_index()
+
+def save_history_index(index: list):
+    """保存轻量历史索引。"""
+    with history_lock:
+        with open(HISTORY_INDEX_FILE, "w", encoding="utf-8") as f:
+            json.dump(index, f, ensure_ascii=False, indent=2)
+
+def load_history() -> list:
+    """加载历史页使用的轻量历史记录。"""
+    return [item for item in load_history_index() if not item.get("deleted")]
+
+def load_history_detail(record_id: int) -> dict:
+    """按历史 ID 加载完整历史详情。"""
+    index = load_history_index()
+    entry = next((item for item in index if item.get("id") == record_id and not item.get("deleted")), None)
+    if not entry:
+        return None
+
+    if entry.get("source_type") == "legacy":
+        for item in load_legacy_history():
+            if item.get("id") == record_id:
+                return item
+        return None
+
+    source_path = entry.get("source_path") or _history_detail_path(record_id)
+    if not os.path.exists(source_path):
+        return None
+    try:
+        with open(source_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return None
+
+def next_history_id(index: list = None) -> int:
+    """获取下一个历史 ID，兼容旧历史和新索引。"""
+    index = index if index is not None else load_history_index()
+    ids = [item.get("id", 0) for item in index]
+    ids.extend(item.get("id", 0) for item in load_legacy_history())
+    return max(ids or [0]) + 1
+
+def format_history_time(timestamp: str) -> str:
+    """历史记录名称使用的时间格式。"""
+    try:
+        return datetime.fromisoformat(timestamp).strftime("%Y-%m-%d %H-%M-%S")
+    except ValueError:
+        return datetime.now().strftime("%Y-%m-%d %H-%M-%S")
+
+def remove_history_assets(item: dict):
+    """删除历史记录关联的上传病历文件；标准文件可能被复用，不在这里删除。"""
+    record_path = item.get("record_path")
+    if not record_path:
+        return
+    candidates = [record_path, os.path.join(UPLOAD_DIR, record_path)]
+    for path in candidates:
+        try:
+            if os.path.exists(path) and os.path.isfile(path):
+                os.remove(path)
+                return
+        except OSError:
+            return
+
+def delete_history_by_id(record_id: int) -> bool:
+    """删除历史记录，同步维护旧文件/详情文件和索引。"""
+    with history_lock:
+        index = load_history_index()
+        entry_index = next((i for i, item in enumerate(index) if item.get("id") == record_id), None)
+        if entry_index is None:
+            return False
+
+        entry = index[entry_index]
+        if entry.get("source_type") == "legacy":
+            history = load_legacy_history()
+            for i, item in enumerate(history):
+                if item.get("id") == record_id:
+                    remove_history_assets(item)
+                    del history[i]
+                    save_legacy_history(history)
+                    break
+        else:
+            detail = load_history_detail(record_id)
+            if detail:
+                remove_history_assets(detail)
+            source_path = entry.get("source_path") or _history_detail_path(record_id)
+            try:
+                if os.path.exists(source_path):
+                    os.remove(source_path)
+            except OSError:
+                pass
+
+        del index[entry_index]
+        save_history_index(index)
+        return True
+
+def rename_history_by_id(record_id: int, new_name: str) -> str:
+    """重命名历史记录，同步维护旧文件/详情文件和索引。"""
+    with history_lock:
+        index = load_history_index()
+        entry = next((item for item in index if item.get("id") == record_id), None)
+        if not entry:
+            return None
+
+        old_name = entry.get("record_name", f"分析记录 #{record_id}")
+        if entry.get("source_type") == "legacy":
+            history = load_legacy_history()
+            found = False
+            for item in history:
+                if item.get("id") == record_id:
+                    item["record_name"] = new_name
+                    found = True
+                    break
+            if not found:
+                return None
+            save_legacy_history(history)
+        else:
+            detail = load_history_detail(record_id)
+            if not detail:
+                return None
+            detail["record_name"] = new_name
+            source_path = entry.get("source_path") or _history_detail_path(record_id)
+            with open(source_path, "w", encoding="utf-8") as f:
+                json.dump(detail, f, ensure_ascii=False, indent=2)
+
+        entry["record_name"] = new_name
+        save_history_index(index)
+        return old_name
 
 def load_standards() -> dict:
     """加载标准文件列表"""
@@ -92,6 +330,14 @@ def save_standards(data: dict):
     """保存标准文件列表"""
     with open(STANDARDS_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+
+def mask_api_key(api_key: str) -> str:
+    """脱敏显示 Dify API Key"""
+    if not api_key:
+        return ""
+    if len(api_key) <= 10:
+        return "*" * len(api_key)
+    return f"{api_key[:6]}...{api_key[-4:]}"
 
 def get_selected_standard() -> dict:
     """获取当前选中的标准文件信息"""
@@ -109,21 +355,22 @@ def cleanup_expired_tasks():
     current_time = time.time()
     expired_tasks = []
     
-    for task_id, task_data in list(global_analysis_tasks.items()):
-        task_age = current_time - task_data["start_time"]
+    with tasks_lock:
+        for task_id, task_data in list(global_analysis_tasks.items()):
+            task_age = current_time - task_data["start_time"]
+            
+            # 如果任务已完成或失败，且超过24小时，则标记为过期
+            if task_data["status"] in ["completed", "failed"] and task_age > TASK_EXPIRATION_TIME:
+                expired_tasks.append(task_id)
         
-        # 如果任务已完成或失败，且超过24小时，则标记为过期
-        if task_data["status"] in ["completed", "failed"] and task_age > TASK_EXPIRATION_TIME:
-            expired_tasks.append(task_id)
-    
-    # 删除过期任务
-    for task_id in expired_tasks:
-        del global_analysis_tasks[task_id]
-    
-    # 保存更新后的任务数据
-    if expired_tasks:
-        save_tasks(global_analysis_tasks)
-        print(f"[清理任务] 清理了 {len(expired_tasks)} 个过期任务")
+        # 删除过期任务
+        for task_id in expired_tasks:
+            del global_analysis_tasks[task_id]
+        
+        # 保存更新后的任务数据
+        if expired_tasks:
+            save_tasks(global_analysis_tasks)
+            print(f"[清理任务] 清理了 {len(expired_tasks)} 个过期任务")
 
 def start_cleanup_scheduler():
     """启动定期清理任务的调度器"""
@@ -168,45 +415,64 @@ def create_analysis_task(record_filename: str, standard_filename: str) -> str:
     task_id = str(uuid.uuid4())
     start_time = time.time()
     
-    global_analysis_tasks[task_id] = {
-        "id": task_id,
-        "status": "pending",  # pending, running, completed, failed
-        "progress": 0,
-        "current_step": "等待开始",
-        "start_time": start_time,
-        "end_time": None,
-        "record_filename": record_filename,
-        "standard_filename": standard_filename,
-        "result": None,
-        "error": None
-    }
-    
-    # 保存任务数据
-    save_tasks(global_analysis_tasks)
+    with tasks_lock:
+        global_analysis_tasks[task_id] = {
+            "id": task_id,
+            "status": "pending",  # pending, running, completed, failed
+            "progress": 0,
+            "current_step": "等待开始",
+            "start_time": start_time,
+            "end_time": None,
+            "record_filename": record_filename,
+            "standard_filename": standard_filename,
+            "result": None,
+            "error": None
+        }
+        
+        # 保存任务数据
+        save_tasks(global_analysis_tasks)
     
     return task_id
 
 def update_task_status(task_id: str, status: str, progress: int = None, current_step: str = None):
     """更新任务状态"""
-    if task_id in global_analysis_tasks:
-        global_analysis_tasks[task_id]["status"] = status
-        if progress is not None:
-            global_analysis_tasks[task_id]["progress"] = progress
-        if current_step is not None:
-            global_analysis_tasks[task_id]["current_step"] = current_step
-        
-        if status in ["completed", "failed"]:
-            global_analysis_tasks[task_id]["end_time"] = time.time()
-        
-        # ✓ 关键：每次更新都保存到文件，确保数据持久化
+    with tasks_lock:
+        if task_id in global_analysis_tasks:
+            global_analysis_tasks[task_id]["status"] = status
+            if progress is not None:
+                global_analysis_tasks[task_id]["progress"] = progress
+            if current_step is not None:
+                global_analysis_tasks[task_id]["current_step"] = current_step
+            
+            if status in ["completed", "failed"]:
+                global_analysis_tasks[task_id]["end_time"] = time.time()
+            
+            # ✓ 关键：每次更新都保存到文件，确保数据持久化
+            save_tasks(global_analysis_tasks)
+
+def normalize_completed_task(task_id: str) -> bool:
+    """兼容修复：result 已存在但状态未完成的旧任务按完成处理。"""
+    with tasks_lock:
+        task = global_analysis_tasks.get(task_id)
+        if not task or not task.get("result") or task.get("status") == "completed":
+            return False
+
+        task["status"] = "completed"
+        task["progress"] = 100
+        task["current_step"] = "分析完成"
+        if not task.get("end_time"):
+            task["end_time"] = time.time()
         save_tasks(global_analysis_tasks)
+        return True
 
 def get_task_info(task_id: str) -> Dict[str, Any]:
     """获取任务信息"""
-    if task_id not in global_analysis_tasks:
-        return {"error": "任务不存在"}
-    
-    task = global_analysis_tasks[task_id].copy()
+    with tasks_lock:
+        if task_id not in global_analysis_tasks:
+            return {"error": "任务不存在"}
+
+        normalize_completed_task(task_id)
+        task = global_analysis_tasks[task_id].copy()
     
     # 计算已用时间
     if task["start_time"]:
@@ -219,6 +485,228 @@ def get_task_info(task_id: str) -> Dict[str, Any]:
         task["total_time"] = round(total_time, 2)
     
     return task
+
+def _find_concurrency_batch(batch_id: str) -> dict:
+    for batch in global_concurrency_tests["batches"]:
+        if batch["id"] == batch_id:
+            return batch
+    return None
+
+def _recalculate_concurrency_summary(batch: dict):
+    details = batch.get("details", [])
+    completed_details = [
+        item for item in details
+        if item.get("status") in ["success", "failed"]
+    ]
+    successful_details = [
+        item for item in details
+        if item.get("status") == "success"
+    ]
+    failed_details = [
+        item for item in details
+        if item.get("status") == "failed"
+    ]
+    durations = [
+        item["duration_seconds"] for item in completed_details
+        if isinstance(item.get("duration_seconds"), (int, float))
+    ]
+
+    batch["completed_attempts"] = len(completed_details)
+    batch["success_count"] = len(successful_details)
+    batch["failed_count"] = len(failed_details)
+    batch["avg_duration_seconds"] = round(sum(durations) / len(durations), 3) if durations else 0
+    batch["min_duration_seconds"] = round(min(durations), 3) if durations else 0
+    batch["max_duration_seconds"] = round(max(durations), 3) if durations else 0
+
+def update_concurrency_batch(batch_id: str, **fields):
+    """更新并发测试批次状态"""
+    with concurrency_tests_lock:
+        batch = _find_concurrency_batch(batch_id)
+        if not batch:
+            return
+        batch.update(fields)
+        _recalculate_concurrency_summary(batch)
+        save_concurrency_tests(global_concurrency_tests)
+
+def update_concurrency_attempt(batch_id: str, attempt_id: str, **fields):
+    """更新并发测试单次明细"""
+    with concurrency_tests_lock:
+        batch = _find_concurrency_batch(batch_id)
+        if not batch:
+            return
+        for detail in batch.get("details", []):
+            if detail["attempt_id"] == attempt_id:
+                detail.update(fields)
+                break
+        _recalculate_concurrency_summary(batch)
+        save_concurrency_tests(global_concurrency_tests)
+
+def get_concurrency_batch_info(batch_id: str) -> dict:
+    """获取并发测试批次信息"""
+    with concurrency_tests_lock:
+        batch = _find_concurrency_batch(batch_id)
+        if not batch:
+            return None
+        return json.loads(json.dumps(batch, ensure_ascii=False))
+
+def summarize_workflow_result(result: Dict[str, Any]) -> Dict[str, Any]:
+    """提取单次工作流结果摘要，避免并发测试明细过大"""
+    count_data = result.get("count") if result else None
+    if isinstance(count_data, str) and count_data.strip():
+        try:
+            count_data = json.loads(count_data)
+        except json.JSONDecodeError:
+            count_data = None
+
+    details = count_data.get("details", {}) if isinstance(count_data, dict) else {}
+    return {
+        "score": details.get("总分"),
+        "grade": details.get("病历等级"),
+        "record_rating_chars": len(result.get("record_rating", "")) if result else 0,
+        "record_all_chars": len(result.get("record_all", "")) if result else 0,
+        "record_chars": len(result.get("record", "")) if result else 0
+    }
+
+def workflow_result_to_html(result: Dict[str, Any]) -> Dict[str, Any]:
+    """将工作流 Markdown 结果转换为首页/历史页面可展示的 HTML。"""
+    return {
+        "record_rating": markdown_to_html(result["record_rating"]),
+        "record_all": markdown_to_html(result["record_all"]),
+        "record": markdown_to_html(result["record"]),
+        "count": result.get("count", "")
+    }
+
+def save_analysis_result_to_history(
+    record_filename: str,
+    standard_filename: str,
+    record_path: str,
+    standard_path: str,
+    analysis_result: Dict[str, Any],
+    record_name: str = None,
+    submitted_at: str = None,
+    attempt_index: int = None
+) -> dict:
+    """原子化写入新历史详情文件和轻量索引，并返回新记录。"""
+    with history_lock:
+        index = load_history_index()
+        next_id = next_history_id(index)
+        timestamp = datetime.now().isoformat()
+        name_time = format_history_time(submitted_at or timestamp)
+
+        if record_name:
+            resolved_record_name = (
+                record_name
+                .replace("{history_id}", str(next_id))
+                .replace("{submitted_time}", name_time)
+            )
+        elif attempt_index is not None:
+            resolved_record_name = f"{next_id}_{record_filename}_{name_time}_第{attempt_index}次"
+        else:
+            resolved_record_name = f"{next_id}_{record_filename}_{name_time}"
+
+        history_item = {
+            "id": next_id,
+            "record_name": resolved_record_name,
+            "timestamp": timestamp,
+            "record_filename": record_filename,
+            "standard_filename": standard_filename,
+            "record_path": record_path,
+            "standard_path": standard_path,
+            "analysis_result": analysis_result
+        }
+        detail_path = _history_detail_path(next_id)
+        with open(detail_path, "w", encoding="utf-8") as f:
+            json.dump(history_item, f, ensure_ascii=False, indent=2)
+
+        index.append(_history_index_entry(history_item, "record_file", detail_path))
+        index.sort(key=lambda item: item["id"])
+        save_history_index(index)
+        return history_item
+
+def _find_analysis_batch(batch_id: str) -> dict:
+    for batch in global_analysis_batches["batches"]:
+        if batch["id"] == batch_id:
+            return batch
+    return None
+
+def _find_analysis_attempt(batch: dict, attempt_id: str) -> dict:
+    for attempt in batch.get("attempts", []):
+        if attempt["attempt_id"] == attempt_id:
+            return attempt
+    return None
+
+def _recalculate_analysis_batch_summary(batch: dict):
+    attempts = batch.get("attempts", [])
+    completed = [item for item in attempts if item.get("status") in ["success", "failed"]]
+    successes = [item for item in attempts if item.get("status") == "success"]
+    failures = [item for item in attempts if item.get("status") == "failed"]
+
+    batch["completed_attempts"] = len(completed)
+    batch["success_count"] = len(successes)
+    batch["failed_count"] = len(failures)
+    batch["updated_at"] = datetime.now().isoformat()
+
+    if attempts and len(completed) == len(attempts):
+        batch["status"] = "completed" if successes else "failed"
+        if not batch.get("ended_at"):
+            batch["ended_at"] = batch["updated_at"]
+    elif any(item.get("status") == "running" for item in attempts):
+        batch["status"] = "running"
+
+def _analysis_batch_public_copy(batch: dict, include_results: bool = False) -> dict:
+    copied = json.loads(json.dumps(batch, ensure_ascii=False))
+    if not include_results:
+        for attempt in copied.get("attempts", []):
+            attempt.pop("result", None)
+    return copied
+
+def get_analysis_batch_info(batch_id: str, include_results: bool = False) -> dict:
+    with analysis_batches_lock:
+        batch = _find_analysis_batch(batch_id)
+        if not batch:
+            return None
+        _recalculate_analysis_batch_summary(batch)
+        save_analysis_batches(global_analysis_batches)
+        return _analysis_batch_public_copy(batch, include_results=include_results)
+
+def get_recent_analysis_batch_for_session(session_id: str) -> dict:
+    with analysis_batches_lock:
+        candidates = [
+            batch for batch in global_analysis_batches["batches"]
+            if batch.get("session_id") == session_id
+        ]
+        if not candidates:
+            return None
+
+        for batch in candidates:
+            _recalculate_analysis_batch_summary(batch)
+        save_analysis_batches(global_analysis_batches)
+
+        running = [batch for batch in candidates if batch.get("status") in ["pending", "running"]]
+        pool = running or candidates
+        pool.sort(key=lambda item: item.get("updated_at") or item.get("created_at") or "", reverse=True)
+        return _analysis_batch_public_copy(pool[0], include_results=False)
+
+def update_analysis_batch(batch_id: str, **fields):
+    with analysis_batches_lock:
+        batch = _find_analysis_batch(batch_id)
+        if not batch:
+            return
+        batch.update(fields)
+        _recalculate_analysis_batch_summary(batch)
+        save_analysis_batches(global_analysis_batches)
+
+def update_analysis_attempt(batch_id: str, attempt_id: str, **fields):
+    with analysis_batches_lock:
+        batch = _find_analysis_batch(batch_id)
+        if not batch:
+            return
+        attempt = _find_analysis_attempt(batch, attempt_id)
+        if not attempt:
+            return
+        attempt.update(fields)
+        _recalculate_analysis_batch_summary(batch)
+        save_analysis_batches(global_analysis_batches)
 
 async def save_upload_file(file: UploadFile, filename: str) -> tuple:
     """保存上传的文件，返回文件路径和文件内容"""
@@ -257,7 +745,7 @@ async def save_upload_file_content(content: bytes, original_filename: str) -> st
     # 返回文件名
     return filename
 
-async def run_workflow_analysis(record_content: bytes, standard_content: bytes, record_filename: str, standard_filename: str, task_id: str = None) -> Dict[str, Any]:
+async def run_workflow_analysis(record_content: bytes, standard_content: bytes, record_filename: str, standard_filename: str, task_id: str = None, executor: ThreadPoolExecutor = None) -> Dict[str, Any]:
     """运行工作流分析"""
     try:
         # 使用线程池异步执行同步的DifyClient操作
@@ -328,7 +816,7 @@ async def run_workflow_analysis(record_content: bytes, standard_content: bytes, 
                 "recoder": {
                     "transfer_method": "local_file",
                     "upload_file_id": record_id,
-                    "type": "custom"
+                    "type": "document"
                 },
                 "stand": {
                     "transfer_method": "local_file",
@@ -391,7 +879,7 @@ async def run_workflow_analysis(record_content: bytes, standard_content: bytes, 
         # 在线程池中异步执行同步代码
         print(f"[工作流] 在线程池中执行分析任务: {task_id}")
         loop = asyncio.get_event_loop()
-        result = await loop.run_in_executor(None, sync_workflow_analysis)
+        result = await loop.run_in_executor(executor, sync_workflow_analysis)
         print(f"[工作流] 线程池执行完成: {task_id}")
         return result
         
@@ -448,6 +936,7 @@ async def analyze_files(
         print(f"[API] 标准文件大小: {len(standard_content)} bytes")
         
         standard_filename = selected_standard["filename"]
+        analysis_submitted_at = datetime.now().isoformat()
         
         # 创建分析任务
         task_id = create_analysis_task(record_file.filename, standard_filename)
@@ -469,55 +958,48 @@ async def analyze_files(
                 
                 if "error" in analysis_result:
                     print(f"[后台] 分析出错: {analysis_result['error']}")
-                    global_analysis_tasks[task_id]["error"] = analysis_result["error"]
-                    save_tasks(global_analysis_tasks)
+                    with tasks_lock:
+                        global_analysis_tasks[task_id]["error"] = analysis_result["error"]
+                        save_tasks(global_analysis_tasks)
                     return
                 
                 # 保存到历史记录
                 print(f"[后台] 保存分析结果到历史记录...")
-                history = load_history()
-                # 修复：使用最大ID而不是记录数，避免删除旧记录后ID冲突
-                max_id = max([item["id"] for item in history] or [0])
-                next_id = max_id + 1
-                default_record_name = f"{next_id}_{record_file.filename}"
-                history_item = {
-                    "id": next_id,
-                    "record_name": default_record_name,
-                    "timestamp": datetime.now().isoformat(),
-                    "record_filename": record_file.filename,
-                    "standard_filename": standard_filename,
-                    "record_path": saved_record_filename,
-                    "standard_path": selected_standard["filepath"],
-                    "analysis_result": analysis_result
-                }
-                
-                history.append(history_item)
-                save_history(history)
+                history_item = save_analysis_result_to_history(
+                    record_filename=record_file.filename,
+                    standard_filename=standard_filename,
+                    record_path=saved_record_filename,
+                    standard_path=selected_standard["filepath"],
+                    analysis_result=analysis_result,
+                    submitted_at=analysis_submitted_at
+                )
                 print(f"[后台] 历史记录已保存")
                 
                 # 转换为HTML
-                result_html = {
-                    "record_rating": markdown_to_html(analysis_result["record_rating"]),
-                    "record_all": markdown_to_html(analysis_result["record_all"]),
-                    "record": markdown_to_html(analysis_result["record"]),
-                    "count": analysis_result.get("count", "")  # 统计数据保持原样（JSON字符串）
-                }
+                result_html = workflow_result_to_html(analysis_result)
                 
-                global_analysis_tasks[task_id]["result"] = {
-                    "status": "success",
-                    "message": "分析完成",
-                    "result": result_html,
-                    "record_id": history_item["id"]
-                }
-                save_tasks(global_analysis_tasks)
+                with tasks_lock:
+                    global_analysis_tasks[task_id]["result"] = {
+                        "status": "success",
+                        "message": "分析完成",
+                        "result": result_html,
+                        "record_id": history_item["id"]
+                    }
+                    global_analysis_tasks[task_id]["status"] = "completed"
+                    global_analysis_tasks[task_id]["progress"] = 100
+                    global_analysis_tasks[task_id]["current_step"] = "分析完成"
+                    if not global_analysis_tasks[task_id].get("end_time"):
+                        global_analysis_tasks[task_id]["end_time"] = time.time()
+                    save_tasks(global_analysis_tasks)
                 print(f"[后台] 分析任务完成: {task_id}")
                 
             except Exception as e:
                 print(f"[后台] 分析任务异常: {str(e)}")
                 import traceback
                 traceback.print_exc()
-                global_analysis_tasks[task_id]["error"] = f"分析失败: {str(e)}"
-                save_tasks(global_analysis_tasks)
+                with tasks_lock:
+                    global_analysis_tasks[task_id]["error"] = f"分析失败: {str(e)}"
+                    save_tasks(global_analysis_tasks)
         
         # 在后台执行分析任务
         print(f"[API] 在后台启动分析任务: {task_id}")
@@ -540,6 +1022,294 @@ async def analyze_files(
             content={"status": "error", "message": f"分析任务创建失败: {str(e)}"}
         )
 
+async def run_home_analysis_attempt(
+    batch_id: str,
+    attempt_id: str,
+    attempt_index: int,
+    batch_submitted_at: str,
+    record_content: bytes,
+    record_filename: str,
+    standard_content: bytes,
+    standard_filename: str,
+    standard_path: str,
+    executor: ThreadPoolExecutor
+):
+    """执行首页批次中的单次分析。"""
+    started = time.time()
+    update_analysis_attempt(
+        batch_id,
+        attempt_id,
+        status="running",
+        progress=10,
+        current_step="初始化分析环境",
+        started_at=datetime.now().isoformat()
+    )
+
+    try:
+        update_analysis_attempt(
+            batch_id,
+            attempt_id,
+            progress=70,
+            current_step="工作流执行中..."
+        )
+        analysis_result = await run_workflow_analysis(
+            record_content,
+            standard_content,
+            record_filename,
+            standard_filename,
+            None,
+            executor=executor
+        )
+        duration = round(time.time() - started, 3)
+
+        if analysis_result.get("error"):
+            update_analysis_attempt(
+                batch_id,
+                attempt_id,
+                status="failed",
+                progress=100,
+                current_step="分析失败",
+                duration_seconds=duration,
+                error=analysis_result["error"],
+                ended_at=datetime.now().isoformat()
+            )
+            return
+
+        update_analysis_attempt(
+            batch_id,
+            attempt_id,
+            progress=90,
+            current_step="保存分析结果"
+        )
+        saved_record_filename = await save_upload_file_content(record_content, record_filename)
+        history_item = save_analysis_result_to_history(
+            record_filename=record_filename,
+            standard_filename=standard_filename,
+            record_path=saved_record_filename,
+            standard_path=standard_path,
+            analysis_result=analysis_result,
+            submitted_at=batch_submitted_at,
+            attempt_index=attempt_index
+        )
+
+        update_analysis_attempt(
+            batch_id,
+            attempt_id,
+            status="success",
+            progress=100,
+            current_step="分析完成",
+            duration_seconds=duration,
+            error=None,
+            history_record_id=history_item["id"],
+            result=workflow_result_to_html(analysis_result),
+            result_summary=summarize_workflow_result(analysis_result),
+            ended_at=datetime.now().isoformat()
+        )
+    except Exception as e:
+        update_analysis_attempt(
+            batch_id,
+            attempt_id,
+            status="failed",
+            progress=100,
+            current_step="分析异常",
+            duration_seconds=round(time.time() - started, 3),
+            error=str(e),
+            ended_at=datetime.now().isoformat()
+        )
+
+async def run_home_analysis_batch(
+    batch_id: str,
+    batch_submitted_at: str,
+    record_content: bytes,
+    record_filename: str,
+    standard_content: bytes,
+    standard_filename: str,
+    standard_path: str,
+    concurrency: int
+):
+    """执行首页单文件多次并发分析批次。"""
+    import asyncio
+
+    update_analysis_batch(
+        batch_id,
+        status="running",
+        started_at=datetime.now().isoformat()
+    )
+
+    try:
+        with ThreadPoolExecutor(max_workers=max(1, concurrency)) as executor:
+            batch = get_analysis_batch_info(batch_id, include_results=True)
+            if not batch:
+                return
+            tasks = [
+                asyncio.create_task(run_home_analysis_attempt(
+                    batch_id=batch_id,
+                    attempt_id=attempt["attempt_id"],
+                    attempt_index=attempt["attempt_index"],
+                    batch_submitted_at=batch_submitted_at,
+                    record_content=record_content,
+                    record_filename=record_filename,
+                    standard_content=standard_content,
+                    standard_filename=standard_filename,
+                    standard_path=standard_path,
+                    executor=executor
+                ))
+                for attempt in batch.get("attempts", [])
+            ]
+            if tasks:
+                await asyncio.gather(*tasks)
+
+        update_analysis_batch(
+            batch_id,
+            ended_at=datetime.now().isoformat()
+        )
+    except Exception as e:
+        update_analysis_batch(
+            batch_id,
+            status="failed",
+            ended_at=datetime.now().isoformat(),
+            error=str(e)
+        )
+
+@app.post("/api/analysis/batches")
+async def create_home_analysis_batch(
+    record_file: UploadFile = File(...),
+    concurrency: int = Form(1),
+    session_id: str = Form(...),
+    confirmed_standard_id: str = Form(None)
+):
+    """创建首页分析批次：一份病历可并发执行多次。"""
+    try:
+        if not record_file.filename:
+            raise HTTPException(status_code=400, detail="请选择病历文件")
+        if concurrency < 1 or concurrency > HOME_ANALYSIS_MAX_CONCURRENCY:
+            raise HTTPException(status_code=400, detail=f"并发次数必须在 1-{HOME_ANALYSIS_MAX_CONCURRENCY} 之间")
+        if not session_id or len(session_id.strip()) < 8:
+            raise HTTPException(status_code=400, detail="会话标识无效")
+
+        ext = os.path.splitext(record_file.filename)[1].lower()
+        if ext not in config.allowed_extensions:
+            raise HTTPException(status_code=400, detail=f"不支持的病历文件格式: {record_file.filename}")
+
+        selected_standard = get_selected_standard()
+        if not selected_standard:
+            raise HTTPException(status_code=400, detail="请先到知识库选择标准文件")
+        if confirmed_standard_id and confirmed_standard_id != selected_standard["id"]:
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "status": "standard_changed",
+                    "message": "当前实际使用标准已变化，请确认后重新提交",
+                    "data": {
+                        "selected_id": selected_standard["id"],
+                        "filename": selected_standard["filename"]
+                    }
+                }
+            )
+
+        standard_filepath = os.path.join(STANDARDS_DIR, selected_standard["filepath"])
+        if not os.path.exists(standard_filepath):
+            raise HTTPException(status_code=400, detail="标准文件不存在，请重新选择")
+
+        record_content = await record_file.read()
+        async with aiofiles.open(standard_filepath, "rb") as f:
+            standard_content = await f.read()
+
+        batch_id = str(uuid.uuid4())
+        now = datetime.now().isoformat()
+        attempts = [
+            {
+                "attempt_id": str(uuid.uuid4()),
+                "attempt_index": index,
+                "status": "pending",
+                "progress": 0,
+                "current_step": "等待开始",
+                "duration_seconds": None,
+                "error": None,
+                "history_record_id": None,
+                "result_summary": None,
+                "result": None
+            }
+            for index in range(1, concurrency + 1)
+        ]
+        batch = {
+            "id": batch_id,
+            "session_id": session_id.strip(),
+            "record_filename": record_file.filename,
+            "standard_filename": selected_standard["filename"],
+            "standard_path": selected_standard["filepath"],
+            "status": "pending",
+            "total_attempts": concurrency,
+            "completed_attempts": 0,
+            "success_count": 0,
+            "failed_count": 0,
+            "created_at": now,
+            "started_at": None,
+            "ended_at": None,
+            "updated_at": now,
+            "attempts": attempts
+        }
+
+        with analysis_batches_lock:
+            global_analysis_batches["batches"].append(batch)
+            save_analysis_batches(global_analysis_batches)
+
+        import asyncio
+        asyncio.create_task(run_home_analysis_batch(
+            batch_id=batch_id,
+            batch_submitted_at=now,
+            record_content=record_content,
+            record_filename=record_file.filename,
+            standard_content=standard_content,
+            standard_filename=selected_standard["filename"],
+            standard_path=selected_standard["filepath"],
+            concurrency=concurrency
+        ))
+
+        return {
+            "status": "success",
+            "message": "分析批次已开始",
+            "batch_id": batch_id,
+            "data": get_analysis_batch_info(batch_id)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"分析批次创建失败: {str(e)}")
+
+@app.get("/api/analysis/batches/recent")
+async def get_recent_home_analysis_batch(session_id: str):
+    """恢复当前浏览器会话最近的首页分析批次。"""
+    if not session_id:
+        raise HTTPException(status_code=400, detail="缺少会话标识")
+    batch = get_recent_analysis_batch_for_session(session_id)
+    if not batch:
+        return {"status": "success", "data": None}
+    return {"status": "success", "data": batch}
+
+@app.get("/api/analysis/batches/{batch_id}")
+async def get_home_analysis_batch(batch_id: str):
+    """获取首页分析批次状态。"""
+    batch = get_analysis_batch_info(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="分析批次不存在")
+    return {"status": "success", "data": batch}
+
+@app.get("/api/analysis/batches/{batch_id}/attempts/{attempt_id}")
+async def get_home_analysis_attempt(batch_id: str, attempt_id: str):
+    """获取首页分析批次中某次运行的完整结果。"""
+    with analysis_batches_lock:
+        batch = _find_analysis_batch(batch_id)
+        if not batch:
+            raise HTTPException(status_code=404, detail="分析批次不存在")
+        attempt = _find_analysis_attempt(batch, attempt_id)
+        if not attempt:
+            raise HTTPException(status_code=404, detail="分析结果不存在")
+        return {
+            "status": "success",
+            "data": json.loads(json.dumps(attempt, ensure_ascii=False))
+        }
+
 @app.get("/history", response_class=HTMLResponse)
 async def history_page(request: Request):
     """历史记录页面"""
@@ -554,11 +1324,210 @@ async def standards_page(request: Request):
     """知识库页面"""
     return templates.TemplateResponse("standards.html", {"request": request})
 
+@app.get("/concurrency-test", response_class=HTMLResponse)
+async def concurrency_test_page(request: Request):
+    """并发测试页面"""
+    return templates.TemplateResponse("concurrency_test.html", {"request": request})
+
+@app.get("/api/concurrency-tests")
+async def list_concurrency_tests():
+    """列出并发测试批次"""
+    with concurrency_tests_lock:
+        batches = []
+        for batch in global_concurrency_tests["batches"]:
+            item = {key: value for key, value in batch.items() if key != "details"}
+            batches.append(item)
+        batches.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+    return {"status": "success", "data": batches}
+
+@app.get("/api/concurrency-tests/{batch_id}")
+async def get_concurrency_test(batch_id: str):
+    """获取并发测试批次详情"""
+    batch = get_concurrency_batch_info(batch_id)
+    if not batch:
+        raise HTTPException(status_code=404, detail="并发测试批次不存在")
+    return {"status": "success", "data": batch}
+
+@app.post("/api/concurrency-tests")
+async def create_concurrency_test(
+    record_files: List[UploadFile] = File(..., alias="record_files[]"),
+    tests_per_record: int = Form(10),
+    records_per_round: int = Form(5)
+):
+    """创建并启动并发测试批次"""
+    selected_standard = get_selected_standard()
+    if not selected_standard:
+        raise HTTPException(status_code=400, detail="请先到知识库选择标准文件")
+
+    standard_filepath = os.path.join(STANDARDS_DIR, selected_standard["filepath"])
+    if not os.path.exists(standard_filepath):
+        raise HTTPException(status_code=400, detail="标准文件不存在，请重新选择")
+
+    if not record_files:
+        raise HTTPException(status_code=400, detail="请至少上传一份病历")
+
+    if tests_per_record < 1 or tests_per_record > CONCURRENCY_MAX_TESTS_PER_RECORD:
+        raise HTTPException(status_code=400, detail=f"每份病历测试次数必须在 1-{CONCURRENCY_MAX_TESTS_PER_RECORD} 之间")
+
+    if records_per_round < 1 or records_per_round > len(record_files):
+        raise HTTPException(status_code=400, detail=f"每轮病历数必须在 1-{len(record_files)} 之间")
+
+    attempts_per_round = tests_per_record * records_per_round
+    if attempts_per_round > CONCURRENCY_MAX_ATTEMPTS_PER_ROUND:
+        raise HTTPException(
+            status_code=400,
+            detail=f"单轮并发数不能超过 {CONCURRENCY_MAX_ATTEMPTS_PER_ROUND}，请调小每份测试次数或每轮病历数"
+        )
+
+    async with aiofiles.open(standard_filepath, "rb") as f:
+        standard_content = await f.read()
+
+    records = []
+    for index, file in enumerate(record_files, start=1):
+        if not file.filename:
+            raise HTTPException(status_code=400, detail="存在未命名的病历文件")
+        ext = os.path.splitext(file.filename)[1].lower()
+        if ext not in config.allowed_extensions:
+            raise HTTPException(status_code=400, detail=f"不支持的病历文件格式: {file.filename}")
+
+        content = await file.read()
+        saved_filename = await save_upload_file_content(content, file.filename)
+        records.append({
+            "record_id": f"record-{index}",
+            "filename": file.filename,
+            "saved_filename": saved_filename,
+            "size_bytes": len(content),
+            "content": content
+        })
+
+    batch_id = str(uuid.uuid4())
+    total_records = len(records)
+    total_rounds = (total_records + records_per_round - 1) // records_per_round
+    total_attempts = total_records * tests_per_record
+    details = []
+
+    for record_index, record in enumerate(records):
+        round_index = (record_index // records_per_round) + 1
+        dispatch_group_index = (record_index % records_per_round) + 1
+        for attempt_index in range(1, tests_per_record + 1):
+            details.append({
+                "attempt_id": str(uuid.uuid4()),
+                "round_index": round_index,
+                "dispatch_group_index": dispatch_group_index,
+                "record_id": record["record_id"],
+                "record_filename": record["filename"],
+                "attempt_index": attempt_index,
+                "status": "pending",
+                "duration_seconds": None,
+                "error": None,
+                "result_summary": None
+            })
+
+    batch = {
+        "id": batch_id,
+        "created_at": datetime.now().isoformat(),
+        "status": "pending",
+        "current_round": 0,
+        "current_record_filename": None,
+        "total_records": total_records,
+        "tests_per_record": tests_per_record,
+        "records_per_round": records_per_round,
+        "attempts_per_round": attempts_per_round,
+        "record_dispatch_interval_seconds": CONCURRENCY_RECORD_DISPATCH_INTERVAL_SECONDS,
+        "total_attempts": total_attempts,
+        "total_rounds": total_rounds,
+        "completed_attempts": 0,
+        "success_count": 0,
+        "failed_count": 0,
+        "avg_duration_seconds": 0,
+        "min_duration_seconds": 0,
+        "max_duration_seconds": 0,
+        "started_at": None,
+        "ended_at": None,
+        "standard_filename": selected_standard["filename"],
+        "records": [
+            {
+                "record_id": record["record_id"],
+                "filename": record["filename"],
+                "saved_filename": record["saved_filename"],
+                "size_bytes": record["size_bytes"]
+            }
+            for record in records
+        ],
+        "details": details
+    }
+
+    with concurrency_tests_lock:
+        global_concurrency_tests["batches"].append(batch)
+        save_concurrency_tests(global_concurrency_tests)
+
+    import asyncio
+    asyncio.create_task(run_concurrency_batch(
+        batch_id=batch_id,
+        records=records,
+        standard_content=standard_content,
+        standard_filename=selected_standard["filename"],
+        tests_per_record=tests_per_record,
+        records_per_round=records_per_round
+    ))
+
+    return {
+        "status": "success",
+        "message": "并发测试批次已开始",
+        "batch_id": batch_id,
+        "data": get_concurrency_batch_info(batch_id)
+    }
+
 @app.get("/api/standards")
 async def get_standards():
     """获取标准文件列表"""
     data = load_standards()
     return {"status": "success", "data": data}
+
+@app.get("/api/dify-config")
+async def get_dify_config():
+    """获取 Dify 配置信息（API Key 脱敏）"""
+    api_key = config.dify_api_key
+    return {
+        "status": "success",
+        "data": {
+            "base_url": config.dify_base_url,
+            "api_key_masked": mask_api_key(api_key),
+            "has_api_key": bool(api_key),
+            "env_override": bool(os.getenv("DIFY_API_KEY"))
+        }
+    }
+
+@app.post("/api/dify-config")
+async def update_dify_config(request: Request):
+    """更新 Dify API Key，用于切换工作流"""
+    try:
+        data = await request.json()
+        api_key = str(data.get("api_key", "")).strip()
+
+        if not api_key:
+            raise HTTPException(status_code=400, detail="请输入 Dify API Key")
+
+        if not config.update_config("dify", "api_key", api_key):
+            raise HTTPException(status_code=500, detail="保存 Dify API Key 失败")
+
+        message = "Dify API Key 已保存，后续分析将使用新的工作流"
+        if os.getenv("DIFY_API_KEY"):
+            message += "；注意：服务重启后环境变量 DIFY_API_KEY 仍会覆盖配置文件"
+
+        return {
+            "status": "success",
+            "message": message,
+            "data": {
+                "api_key_masked": mask_api_key(api_key),
+                "has_api_key": True,
+                "env_override": bool(os.getenv("DIFY_API_KEY"))
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"更新 Dify 配置失败: {str(e)}")
 
 @app.post("/api/standards/upload")
 async def upload_standard(file: UploadFile = File(...)):
@@ -630,45 +1599,30 @@ async def delete_standard(standard_id: str):
 @app.get("/api/history/{record_id}")
 async def get_history_record(record_id: int):
     """获取特定历史记录"""
-    history = load_history()
-    
-    for item in history:
-        if item["id"] == record_id:
-            result = item["analysis_result"]
-            return {
-                "status": "success",
-                "data": {
-                    "record": markdown_to_html(result["record"]),
-                    "record_rating": markdown_to_html(result["record_rating"]),
-                    "record_all": markdown_to_html(result["record_all"]),
-                    "count": result.get("count", ""),  # 统计数据（可能不存在于旧记录）
-                    "record_filename": item["record_filename"],
-                    "standard_filename": item["standard_filename"],
-                    "timestamp": item["timestamp"],
-                    "record_name": item.get("record_name", f"分析记录 #{record_id}")
-                }
+    item = load_history_detail(record_id)
+    if item:
+        result = item["analysis_result"]
+        return {
+            "status": "success",
+            "data": {
+                "record": markdown_to_html(result["record"]),
+                "record_rating": markdown_to_html(result["record_rating"]),
+                "record_all": markdown_to_html(result["record_all"]),
+                "count": result.get("count", ""),  # 统计数据（可能不存在于旧记录）
+                "record_filename": item["record_filename"],
+                "standard_filename": item["standard_filename"],
+                "timestamp": item["timestamp"],
+                "record_name": item.get("record_name", f"分析记录 #{record_id}")
             }
+        }
     
     raise HTTPException(status_code=404, detail="记录不存在")
 
 @app.get("/api/history/{record_id}/delete")
 async def delete_history_record(record_id: int):
     """删除历史记录"""
-    history = load_history()
-    
-    for i, item in enumerate(history):
-        if item["id"] == record_id:
-            # 删除文件
-            if os.path.exists(item["record_path"]):
-                os.remove(item["record_path"])
-            if os.path.exists(item["standard_path"]):
-                os.remove(item["standard_path"])
-            
-            # 删除记录
-            del history[i]
-            save_history(history)
-            
-            return {"status": "success", "message": "记录已删除"}
+    if delete_history_by_id(record_id):
+        return {"status": "success", "message": "记录已删除"}
     
     raise HTTPException(status_code=404, detail="记录不存在")
 
@@ -685,18 +1639,11 @@ async def rename_history_record(record_id: int, request: Request):
             print(f"[重命名] 参数验证失败")
             raise HTTPException(status_code=400, detail="请提供记录名称")
         
-        history = load_history()
-        
-        for item in history:
-            if item["id"] == record_id:
-                old_name = item.get("record_name", f"分析记录 #{record_id}")
-                item["record_name"] = new_name.strip()
-                
-                print(f"[重命名] 记录名称已修改: {old_name} → {new_name.strip()}")
-                
-                save_history(history)
-                print(f"[重命名] 历史记录已保存")
-                return {"status": "success", "message": "记录名称已修改"}
+        old_name = rename_history_by_id(record_id, new_name.strip())
+        if old_name is not None:
+            print(f"[重命名] 记录名称已修改: {old_name} → {new_name.strip()}")
+            print(f"[重命名] 历史记录已保存")
+            return {"status": "success", "message": "记录名称已修改"}
         
         print(f"[重命名] 记录不存在: {record_id}")
         raise HTTPException(status_code=404, detail="记录不存在")
@@ -762,6 +1709,148 @@ async def get_analysis_task_status(task_id: str):
         response["error"] = task_info["error"]
     
     return response
+
+async def run_concurrency_attempt(
+    batch_id: str,
+    attempt: dict,
+    record: dict,
+    standard_content: bytes,
+    standard_filename: str,
+    executor: ThreadPoolExecutor
+):
+    """执行并发测试中的单次工作流请求"""
+    attempt_id = attempt["attempt_id"]
+    update_concurrency_attempt(
+        batch_id,
+        attempt_id,
+        status="running",
+        started_at=datetime.now().isoformat()
+    )
+
+    started = time.time()
+    try:
+        result = await run_workflow_analysis(
+            record["content"],
+            standard_content,
+            record["saved_filename"],
+            standard_filename,
+            None,
+            executor=executor
+        )
+        duration = round(time.time() - started, 3)
+
+        if result.get("error"):
+            update_concurrency_attempt(
+                batch_id,
+                attempt_id,
+                status="failed",
+                duration_seconds=duration,
+                error=result["error"],
+                ended_at=datetime.now().isoformat()
+            )
+            return
+
+        update_concurrency_attempt(
+            batch_id,
+            attempt_id,
+            status="success",
+            duration_seconds=duration,
+            error=None,
+            result_summary=summarize_workflow_result(result),
+            ended_at=datetime.now().isoformat()
+        )
+    except Exception as e:
+        update_concurrency_attempt(
+            batch_id,
+            attempt_id,
+            status="failed",
+            duration_seconds=round(time.time() - started, 3),
+            error=str(e),
+            ended_at=datetime.now().isoformat()
+        )
+
+async def run_concurrency_batch(
+    batch_id: str,
+    records: List[dict],
+    standard_content: bytes,
+    standard_filename: str,
+    tests_per_record: int,
+    records_per_round: int
+):
+    """按轮次执行并发测试批次"""
+    import asyncio
+
+    update_concurrency_batch(
+        batch_id,
+        status="running",
+        started_at=datetime.now().isoformat(),
+        current_round=0
+    )
+
+    try:
+        record_map = {record["record_id"]: record for record in records}
+        total_rounds = (len(records) + records_per_round - 1) // records_per_round
+
+        for round_index in range(1, total_rounds + 1):
+            batch = get_concurrency_batch_info(batch_id)
+            if not batch:
+                return
+
+            round_attempts = [
+                detail for detail in batch.get("details", [])
+                if detail.get("round_index") == round_index
+            ]
+            attempts_by_record = {}
+            for attempt in round_attempts:
+                attempts_by_record.setdefault(attempt["record_id"], []).append(attempt)
+
+            update_concurrency_batch(batch_id, current_round=round_index)
+
+            with ThreadPoolExecutor(max_workers=max(1, len(round_attempts))) as executor:
+                running_tasks = []
+                for group_index, (record_id, record_attempts) in enumerate(attempts_by_record.items(), start=1):
+                    record = record_map[record_id]
+                    update_concurrency_batch(
+                        batch_id,
+                        current_round=round_index,
+                        current_record_filename=record["filename"]
+                    )
+
+                    running_tasks.extend([
+                        asyncio.create_task(run_concurrency_attempt(
+                            batch_id=batch_id,
+                            attempt=attempt,
+                            record=record,
+                            standard_content=standard_content,
+                            standard_filename=standard_filename,
+                            executor=executor
+                        ))
+                        for attempt in record_attempts
+                    ])
+
+                    if group_index < len(attempts_by_record):
+                        await asyncio.sleep(CONCURRENCY_RECORD_DISPATCH_INTERVAL_SECONDS)
+
+                if running_tasks:
+                    await asyncio.gather(*running_tasks)
+
+                update_concurrency_batch(batch_id, current_record_filename=None)
+
+        update_concurrency_batch(
+            batch_id,
+            status="completed",
+            current_round=total_rounds,
+            current_record_filename=None,
+            ended_at=datetime.now().isoformat()
+        )
+    except Exception as e:
+        update_concurrency_batch(
+            batch_id,
+            status="failed",
+            current_record_filename=None,
+            ended_at=datetime.now().isoformat(),
+            error=str(e)
+        )
 
 @app.on_event("startup")
 async def startup_event():

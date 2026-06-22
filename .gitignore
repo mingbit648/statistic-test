@@ -47,6 +47,13 @@ workflow_execution_details.json
 !README.md
 !requirements.txt
 
+# Runtime artifacts
+config.zip
+record_result.json
+server.err.log
+server.out.log
+响应.json
+
 # Environment
 .env
 .env.local
